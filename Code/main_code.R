@@ -617,62 +617,62 @@ constraintsVectMatrix[1,]
 tableHI.C.filter<-oadaAICtable(nbdadata=nbdaDataHI.C.filter, constraintsVectMatrix=constraintsVectMatrix,writeProgressFile = T)
 print(tableHI.C.filter)
 
-save(tableSPONGING.C.filter, file="AIC table HI.Rdata")
+save(tableHI.C.filter, file="AIC table HI.Rdata")
 load("AIC table HI.Rdata")
 
 
-write.csv(as.data.frame(tableSPONGING.C.filter@printTable), "AIC table sponging.csv")
+write.csv(as.data.frame(tableHI.C.filter@printTable), "AIC table sponging.csv")
 
 
 ##Create a new object with a printTable that excludes unfitted model
-newTableSPONGING<-tableSPONGING.C.filter
-newTableSPONGING@printTable<-tableSPONGING.C.filter@printTable[!is.nan(tableSPONGING.C.filter@printTable$aicc)&!is.na(tableSPONGING.C.filter@printTable$aicc),]
+newTableHI<-tableHI.C.filter
+newTableHI@printTable<-tableHI.C.filter@printTable[!is.nan(tableHI.C.filter@printTable$aicc)&!is.na(tableHI.C.filter@printTable$aicc),]
 
-newTableSPONGING@aicc<-tableSPONGING.C.filter@aicc[!is.nan(tableSPONGING.C.filter@aicc)&!is.na(tableSPONGING.C.filter@aicc)]
-newTableSPONGING@MLEs<-tableSPONGING.C.filter@MLEs[!is.nan(tableSPONGING.C.filter@aicc)&!is.na(tableSPONGING.C.filter@aicc),]
-newTableSPONGING@MLEilv<-tableSPONGING.C.filter@MLEilv[!is.nan(tableSPONGING.C.filter@aicc)&!is.na(tableSPONGING.C.filter@aicc),]
-newTableSPONGING@MLEint<-tableSPONGING.C.filter@MLEint[!is.nan(tableSPONGING.C.filter@aicc)&!is.na(tableSPONGING.C.filter@aicc),]
+tableHI.C.filter@aicc<-tableHI.C.filter@aicc[!is.nan(tableHI.C.filter@aicc)&!is.na(tableHI.C.filter@aicc)]
+tableHI.C.filter@MLEs<-tableHI.C.filter@MLEs[!is.nan(tableHI.C.filter@aicc)&!is.na(tableHI.C.filter@aicc),]
+newTableHI@MLEilv<-tableHI.C.filter@MLEilv[!is.nan(tableHI.C.filter@aicc)&!is.na(tableHI.C.filter@aicc),]
+newTableHI@MLEint<-tableHI.C.filter@MLEint[!is.nan(tableHI.C.filter@aicc)&!is.na(tableHI.C.filter@aicc),]
 
 
-newTableSPONGING@printTable<-newTableSPONGING@printTable[order(newTableSPONGING@printTable$aicc),]
-newTableSPONGING@printTable$deltaAICc<-newTableSPONGING@printTable$aicc-newTableSPONGING@printTable$aicc[1]
+newTableHI@printTable<-newTableHI@printTable[order(newTableHI@printTable$aicc),]
+newTableHI@printTable$deltaAICc<-newTableHI@printTable$aicc-newTableHI@printTable$aicc[1]
 
 # calculate support for fitted models
-newTableSPONGING@printTable$RelSupport<- exp(-0.5*newTableSPONGING@printTable$deltaAICc)
-newTableSPONGING@printTable$AkaikeWeight<-newTableSPONGING@printTable$RelSupport/sum(newTableSPONGING@printTable$RelSupport)
+newTableHI@printTable$RelSupport<- exp(-0.5*newTableHI@printTable$deltaAICc)
+newTableHI@printTable$AkaikeWeight<-newTableHI@printTable$RelSupport/sum(newTableHI@printTable$RelSupport)
 
 
-newTableSPONGING@deltaAIC<-newTableSPONGING@aicc-min(newTableSPONGING@aicc)
+newTableHI@deltaAIC<-newTableHI@aicc-min(newTableHI@aicc)
 
-newTableSPONGING@RelSupport<- exp(-0.5*newTableSPONGING@deltaAIC)
-newTableSPONGING@AkaikeWeight<-newTableSPONGING@RelSupport/sum(newTableSPONGING@RelSupport)
+newTableHI@RelSupport<- exp(-0.5*newTableHI@deltaAIC)
+newTableHI@AkaikeWeight<-newTableHI@RelSupport/sum(newTableHI@RelSupport)
 
 
-dim(tableSPONGING.C.filter@printTable)[1]-dim(newTableSPONGING@printTable)[1]
-dim(tableSPONGING.C.filter@printTable)[1]
+dim(tableHI.C.filter@printTable)[1]-dim(newTableHI@printTable)[1]
+dim(tableHI.C.filter@printTable)[1]
 
 ##2 models could not be fitted out of 4096- probably too many parameters for the dataset
 
 # save reduced AIC table as csv
-write.csv(newTableSPONGING@printTable, file="sponging.AIC_table_CORRECTED.csv")
+write.csv(newTableHI@printTable, file="HI.AIC_table_CORRECTED.csv")
 
 
 # obtain network support for each network combination
-networksSupport_sponging<-networksSupport(newTableSPONGING)
-networksSupport_sponging
-write.csv(networksSupport_sponging, file="networksSupport_sponging.csv")
+networksSupport_HI<-networksSupport(newTableHI)
+networksSupport_HI
+write.csv(networksSupport_HI, file="networksSupport_HI.csv")
 #83.7% support for vertical social network only (1:0:0:0)
 
 # extract support for each variable
-variable_support <- variableSupport(newTableSPONGING, includeAsocial = T)
+variable_support <- variableSupport(newTableHI, includeAsocial = T)
 variable_support
-write.csv(variable_support, file="variable_support_sponging.csv")
+write.csv(variable_support, file="variable_support_HI.csv")
 
 # extract model averaged medians
-MLE_med  <- modelAverageEstimates(newTableSPONGING,averageType = "median")
+MLE_med  <- modelAverageEstimates(newTableHI,averageType = "median")
 MLE_med
 
-write.csv(MLE_med, "MLE_sponging.csv")
+write.csv(MLE_med, "MLE_HI.csv")
 
 
 #######################################################################################################################################
@@ -680,11 +680,11 @@ write.csv(MLE_med, "MLE_sponging.csv")
 #This is vital for s parameters since CIs based on SEs will be highly misleading due to frequent assymetry in the profile likelihood
 #######################################################################################################################################
 
-print(newTableSPONGING)[1:10,]
+print(newTableHI)[1:10,]
 
 # constraintsVectMatrix[4076,] for best model (vertical social learning + social.sex)
 
-bestModelData<-constrainedNBDAdata(nbdadata=nbdaDataSPONGING.C.filter,constraintsVect =constraintsVectMatrix[4076,])
+bestModelData<-constrainedNBDAdata(nbdadata=nbdaDataHI.C.filter,constraintsVect=constraintsVectMatrix[112,])
 model.best.social<-oadaFit(bestModelData)
 model.best.social@outputPar
 # [1] 1.233004e+10 -4.840486e+00
@@ -693,7 +693,7 @@ model.best.social@aicc
 
 
 # extract profile likelihood. which=1 extracts the first parameter (s parameter for vertical social learning)
-plotProfLik(which=1,model=model.best.social1,range=c(0,1e30), resolution=20)
+plotProfLik(which=1,model=model.best.social,range=c(0,1e30), resolution=20)
 #Here we can see that we cannot set an upper limit on s (see explanation below)
 
 #Zoom in to locate the lower limit for s
