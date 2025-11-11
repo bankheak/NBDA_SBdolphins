@@ -1,204 +1,9 @@
-##############  'Multi-network Network-Based Diffusion Analysis reveals vertical cultural transmission of sponge tool use within dolphin matrilines'
-## authors: Sonja Wild; Simon J. Allen; Michael Kr?tzen; Stephanie L. King; Livia Gerber; William J.E. Hoppitt
-
-####################################################################################################
-######## PART 1: calculate dyadic home range overlaps
-
-## load all necessary libraries
-
-if(!require(sp)){install.packages('sp'); library(sp)} 
-if(!require(OpenStreetMap)){install.packages('OpenStreetMap'); library(OpenStreetMap)} 
-if(!require(rgdal)){install.packages('rgdal'); library(rgdal)} 
-if(!require(ggplot2)){install.packages('ggplot2'); library(ggplot2)} 
-if(!require(ggmap)){install.packages('ggmap'); library(ggmap)} 
-if(!require(XML)){install.packages('XML'); library(XML)} 
-if(!require(adehabitatHR)){install.packages('adehabitatHR'); library(adehabitatHR)} 
-if(!require(raster)){install.packages('raster'); library(raster)} 
-if(!require(dismo)){install.packages('dismo'); library(dismo)} 
-if(!require(rgeos)){install.packages('rgeos'); library(rgeos)} 
-
-
-# parts of the following code are based on lines of code suggested by Calenge in 2011 as a response to home range questions in a forum. The original entry can be found here:
-# http://r-sig-geo.2731867.n2.nabble.com/Walruses-and-adehabitatHR-class-estUDm-exclusion-of-non-habitat-pixels-and-summary-over-all-animals-td6497315.html
-
-## read in GPS data:
-# available under https://datadryad.org/bitstream/handle/10255/dryad.211825/GPS%20locations.csv?sequence=1
-
-setwd("../Data") # set working directory
-
-data <- read.csv("orig_data.csv")
-GPS <- data[, c("Code", "StartLon", "StartLat")]
-colnames(GPS) <- c("id_individual", "longitude", "latitude")
-
-# extract ID names from GPS file
-IDs <- sort(as.vector(unique(GPS[,"id_individual"])))
-
-df <- data.frame(IDs)
-
-# Read SHAPEFILE of water body of the Western Gulf of Shark Bay
-
-shape <- readOGR(dsn = "C:/'''/water_area_shapefile", layer="water_area_shape_UTM")
-## transform to UTM
-shape <- spTransform(shape, CRS("+init=epsg:32749"))
-
-## double check the shape file by plotting
-plot(shape)
-
-# create a raster file with the extent of the shape file
-rgrid <- raster(extent(shape))
-## set resolution of the grid to 100m
-res(rgrid) <- c(100, 100)
-
-## assign a value of 1 to each grid cell
-rgrid[] <- 1
-
-# clip the grid layer with the shape file. Receive a grid that overlays the water body (no land)
-rgrid_msk <- mask(rgrid,shape)
-
-# assign a 0 to all cells that are not water
-rgrid_msk[is.na(rgrid_msk)] <- 0
-
-# double check by plotting
-plot(rgrid_msk)
-
-## set layer CRS to UTM zone 49 South. Might return an error if already in UTM zone 49 South
-proj4string(rgrid_msk) <- CRS(proj4string(shape))
-
-
-# convert to spatial points data frame
-grid_ae <- as(rgrid_msk, 'SpatialPointsDataFrame')
-grid_ae <- grid_ae[!is.na(grid_ae@data$layer), ]
-
-gridded(grid_ae) <- TRUE
-summary(grid_ae)
-
-# assign to a new object hab
-hab <- grid_ae
-
-
-## convert GPS to a spatialpixeldataframe and convert to UTM 49 S
-
-xy_GPS = GPS[c("longitude", "latitude")]
-coordinates(xy_GPS)=c("longitude","latitude")
-GPS_sp<-SpatialPointsDataFrame(xy_GPS, GPS)
-
-## set coordinate system as WGS84 (epsg code 4326)
-proj4string(GPS_sp) <- CRS("+init=epsg:4326")
-
-#transform coordinates into UTM zone 49 South (epgs code 32749)
-GPS_sp <- spTransform(GPS_sp, CRS("+init=epsg:32749"))
-
-
-## run kernel density estimates using the habitat as grid.
-# for choice of smoothing factor: href seems to oversmooth when using the bivariate kernel. With Epachernikov kernel estimates are
-# a little more accurate, but still oversmoothed. LSCV undersmoothes drastically and is hence not useful. 
-
-# run a first kernel with epanechnikov and href
-ud_epa <- kernelUD(GPS_sp[,1],
-                   h="href",
-                   grid=grid_ae,
-                   kern="epa")
-
-
-# assign to new object
-ud_epa_new <- ud_epa
-
-## extract smoothing parameters for each individual
-smoothing <- NULL
-
-
-for (i in 1:length(IDs)){
-  h <- ud_epa[[i]]@h$h
-  smoothing[i] <- h
-}
-
-
-# smoothing parameters need to be made smaller. Thereby, large values of h need t be reduced more than already small values of h.
-# Adjustment was carefully chosen after visual inspection of 12 home ranges. 
-
-# set a minimum of 1000 and a maximum of 4000
-smoothing_red <- pmax(smoothing, 1000)
-smoothing_red <- pmin(smoothing_red, 4000)
-
-# then adjust smoothing factors
-smoothing_red <- 0.5*smoothing_red+1500
-
-
-# rerun kernel density calculations with the adjusted smoothing factor
-for (i in 1: length(IDs)){ # each individual separetly
-  
-  sub <- subset(GPS, subset=GPS$id_individual==levels(GPS$id_individual)[i]) # subset the initial data frame with the GPS points
-  sub <- sub[,-1] # remove the survey id column
-  
-  #### create a spatial points data frame 
-  xy = sub[c("longitude", "latitude")]
-  coordinates(xy)=c("longitude","latitude")
-  sub_GPS<-SpatialPointsDataFrame(xy, sub)
-  
-  ## set coordinate system as WGS84 (epsg code 4326)
-  proj4string(sub_GPS) <- CRS("+init=epsg:4326")
-  
-  #transform coordinates into UTM zone 49 South (epgs code 32749)
-  sub_GPS <- spTransform(sub_GPS, CRS("+init=epsg:32749"))
-  
-  h <- smoothing_red[i] # use adjusted smoothing parameter
-  
-  ud <- kernelUD(sub_GPS, # run kernelUD with adjusted smoothing parameter
-                 h=h,
-                 grid=grid_ae,
-                 kern="epa")
-  ud_epa_new[[i]]$ud <- ud$ud # save the UD in the estUDm object created above
-  ud_epa_new[[i]]@h$h <- h # save the adjusted smoothing factor
-}
-
-# ignore the warning about that xy should only contain one column
-
-
-# change to spatial pixels data frame
-udspdf <- estUDm2spixdf(ud_epa_new)
-fullgrid(udspdf) <- TRUE
-fullgrid(hab)<-TRUE
-
-# multiply each UD with the 1/0 (hab) and rescale so that the sum of the new UD sums up to 0.00001 
-resu <- lapply(1:ncol(udspdf), function(i) {udspdf[[i]] * hab[[1]]/sum(udspdf[[i]] * hab[[1]])/10000}) 
-resu <- as.data.frame(resu)
-names(resu) <- names(udspdf@data)
-udspdf@data <- resu
-
-fullgrid(udspdf) <- FALSE
-
-# transfer back into a object of class estUDm
-re <- lapply(1:ncol(udspdf), function(i) { 
-  so <- new("estUD", udspdf[,i]) 
-  so@h <- list(h=0, meth="specified") # fake value 
-  so@vol <- FALSE 
-  return(so) 
-}) 
-
-names(re) <- names(udspdf) # re-assign names
-class(re) <- "estUDm" 
-
-
-# save object
-save(re, file="Kernel_densities_epa_first five.RData")
-load("Kernel_densities_epa_first five.RData")
-
-# calculate home range overlaps using the adjusted kernels using 95%
-overlaps_UDOI_epa <- kerneloverlaphr(re, method="UDOI", percent=95, conditional=TRUE) 
-
-
-# write objects as csv files
-
-write.csv(overlaps_UDOI_epa, file="overlaps_UDOI_first five.csv")
-
-
-
+##############  Multi-network Network-Based Diffusion Analysis
 
 #######################################################################################################################################
-####### PART 2: applying NBDA to HI data:
+####### PART 1: Wrangling data:
 
-# load NBDA package
-
+# load packages
 if(!require(devtools)){install.packages('devtools'); library(devtools)} # To load NBDA
 if(!require(asnipe)){install.packages('asnipe'); library(asnipe)} # get_group_by_individual
 if(!require(sf)){install.packages('sf'); library(sf)} # Convert degrees to meters
@@ -210,12 +15,78 @@ setwd("../../NBDA")
 load_all()
 
 # all networks available under https://datadryad.org/review?doi=doi:10.5061/dryad.sc26m6c.
-setwd("../Data") # set working directory
+setwd("../NBDA_SBdolphins/Data") # set working directory
 source("../Code/functions.R") # nxn
 
+# Read ILVs
+ILV_all <- read.csv("ILV_dem.csv", header=TRUE, sep=",")
+ILV_all <- ILV_all[, c("Alias", "HI_Indiv", "Mom", "Sex", "BirthYear")]
+
+# Read orig_data
+orig_data <- read.csv("orig_data.csv")
+orig_data <- subset(orig_data, Code %in% ILV_all$Alias)
+orig_data$Confirmed_HI <- ifelse(orig_data$ConfHI != "0", 1, 0)
+orig_data$Date <- as.Date(as.character(orig_data$Date), format="%Y-%m-%d")
+
+# Subset data to first acquisition event
+first_idx <- which(orig_data$Confirmed_HI == 1)[1]
+orig_data <- orig_data[first_idx:nrow(orig_data), ]
+
+# Filter data to include individuals that were seen in all time periods
+tab <- table(orig_data$Code, orig_data$Year)
+codes_in_all_years <- rownames(tab)[rowSums(tab > 5) == ncol(tab)]
+filtered_data <- orig_data[orig_data$Code %in% codes_in_all_years, ]
+
+write.csv(filtered_data, "filtered_data.csv")
+
+# Subset ILVs to include these filtered individuals
+Codes <- unique(filtered_data$Code)
+ILV_all <- subset(ILV_all, Alias %in% Codes)
+
+# Add order of acquisition data
+# Create demonstrator column
+ILV_all$Demons_HI_forage <- ifelse(
+  ILV_all$Alias %in% unique(filtered_data$Code[filtered_data$Confirmed_HI == 1 & 
+                                                 filtered_data$Date == min(filtered_data$Date)]),
+  "yes",
+  "no"
+)
+
+# Create acquisition data
+# Step 1: Filter filtered_data for confirmed HI behavior after first date
+hi_data <- filtered_data[filtered_data$Confirmed_HI == 1 & filtered_data$Date != min(filtered_data$Date), ]
+
+# Step 2: Get the first year each Alias showed the behavior
+first_hi_year <- aggregate(Date ~ Code, data = hi_data, FUN = min)
+
+# Step 3: Create a new column for order of acquisition
+first_hi_year$HI_Order_acquisition <- as.numeric(first_hi_year$Date - min(first_hi_year$Date))
+
+# Step 4: Merge this info back into ILV_all
+ILV_all <- merge(ILV_all, first_hi_year[, c("Code", "HI_Order_acquisition")],
+                 by.x = "Alias", by.y = "Code", all.x = TRUE)
+
+# Step 5: Replace NA with 0 for individuals who had the behavior in 1995
+ILV_all$HI_Order_acquisition[ILV_all$Demons_HI_forage == "yes"] <- 0
+
+# Save data
+write.csv(ILV_all, "ILV_all_subset.csv")
+
 # Vertical network -----------------------------------------
+
+# Read in original data
+filtered_data <- read.csv("filtered_data.csv") # original data
+
+# Count sightings per Code per Year
+code_counts <- table(filtered_data$Year, filtered_data$Code)
+code_counts_df <- as.data.frame(code_counts)
+names(code_counts_df) <- c("Year", "Code", "Freq")
+
 # Find the demographics of the population
 ILV_pat <- read.csv("Paternity_data.csv")
+
+Codes <- unique(filtered_data$Code)
+ILV_pat <- subset(ILV_pat, Alias %in% Codes)
 
 # Subset paternity data
 ILV_pat <- data.frame(Code = ILV_pat$Alias,
@@ -225,69 +96,146 @@ SRI_vert_all <- vert.func(ILV_pat)
 # Save vert
 saveRDS(SRI_vert_all, "SRI_vert_all.RData")
 
-# Read in matrix
+# Horizontal network -----------------------------------------
+
+# Read in filtered data
+filtered_data <- read.csv("filtered_data.csv")
+
+# Add individual data
+ILV_all <- read.csv("ILV_all_subset.csv")
+
+# Read in vertical network
 SRI_vert_all <- readRDS("SRI_vert_all.RData")
 
-# Horizontal network -----------------------------------------
-orig_data <- read.csv("orig_data.csv") # original data
-orig_data <- subset(orig_data, Code %in% ILV_pat$Code)
-
 # Group each individual by date and sighting
-group_data <- orig_data[,c("Date","Sighting","Code","Year")]
+group_data <- filtered_data[,c("Date","Sighting","Code","Year", "ConfHI")]
+group_data$Confirmed_HI <- ifelse(group_data$ConfHI != "0", 1, 0)
 group_data$Group <- cumsum(!duplicated(group_data[1:2])) # Create sequential group # by date
-group_data <- group_data[,3:5] # Subset ID and group #
+group_data <- group_data[,c(1, 3, 4, 6, 7)] # Subset ID and group #
 
-# Gambit of the group index
-gbi <- get_group_by_individual(group_data[,c("Code", "Group")], data_format = "individuals")
+# Add date as a date
+group_data$Date <- as.Date(as.character(group_data$Date), format="%Y-%m-%d")
+
+# Subset the data to include observations only from before acquisition
+# 1. Identify Codes to exclude
+exclude_codes <- ILV_all$Alias[ILV_all$Demons_HI_forage == 'yes']
+
+# 2. Compute first HI index for each Code
+first_HI_index <- tapply(seq_len(nrow(group_data)), group_data$Code, function(idx) {
+  hi_rows <- idx[group_data$Confirmed_HI[idx] == 1]
+  if (length(hi_rows) > 0) hi_rows[1] else Inf
+})
+
+# 3. Split rows by Code
+split_rows <- split(seq_len(nrow(group_data)), group_data$Code)
+
+# 4. For excluded Codes: keep all rows
+# For others: keep up to first HI, or all if no HI (cutoff = Inf)
+keep_rows <- mapply(function(idx, cutoff, code) {
+  if (code %in% exclude_codes || is.infinite(cutoff)) {
+    idx  # keep everything for excluded Codes or codes with no HI
+  } else {
+    idx[idx <= cutoff]  # keep up to first HI for others
+  }
+}, split_rows, first_HI_index[names(split_rows)], names(split_rows))
+
+# 5. Flatten and subset
+keep_rows <- unlist(keep_rows)
+
+# Subset the data
+group_data <- group_data[keep_rows, ]
+
+# Now create a list for each year
+group_data_list <- split(group_data, group_data$Year)
+
+# Calculate Gambit of the group
+create_gbi <- function(list_years) {
+  gbi <- list()
+  for (i in seq_along(list_years)) {
+    
+    # Gambit of the group index
+    gbi[[i]] <- get_group_by_individual(list_years[[i]][,c("Code", "Group")], data_format = "individuals")
+  }
+  return(gbi)                                      
+}
+
+gbi <- create_gbi(group_data_list)
+saveRDS(gbi, "gbi.RData")
 
 # Create association matrix
-nxn <- as.matrix(SRI.func(gbi))
+create_nxn <- function(gbi) {
+  n.cores <- detectCores()
+  system.time({
+    registerDoParallel(n.cores)
+    nxn <- list()
+    for (i in seq_along(gbi)) {
+      nxn[[i]] <- as.matrix(SRI.func(gbi[[i]]))
+    }                                 
+    # End parallel processing
+    stopImplicitCluster()
+  })
+  return(nxn)
+}
+
+nxn <- create_nxn(gbi)
 
 # Order data
 id_order <- rownames(SRI_vert_all)
-nxn_ordered <- nxn[id_order, id_order]
+nxn_ordered <- lapply(nxn, function(mat) mat[id_order, id_order])
 
 # Get rid of vertical data
-SRI_hor_no_vert_all <- ifelse(SRI_vert_all == 1, 0, nxn_ordered)
+SRI_hor_no_vert_all <- lapply(nxn_ordered, function (mat) ifelse(mat == 1, 0, mat))
+
+# Change into array
+SRI_hor_no_vert_all <- lapply(SRI_hor_no_vert_all, function (mat) as.matrix(mat))
 
 # Save nxn
 saveRDS(SRI_hor_no_vert_all, "SRI_hor_no_vert_all.RData")
 
-# Read nxn
-SRI_hor_no_vert_all <- readRDS("SRI_hor_no_vert_all.RData")
-
 # Ecological network -----------------------------------------
 # Transform coordinate data into a Spatial Points Dataframe in km
-ids <- orig_data$Code
-coordinates <- orig_data[, c("StartLon", "StartLat")]
 
-# Create a SpatialPointsDataFrame with coordinates
-coords_sp <- SpatialPointsDataFrame(coords = coordinates, data = data.frame(id = ids))
+# Read in filtered data
+filtered_data <- read.csv("filtered_data.csv")
 
-# Set CRS to WGS84
-proj4string(coords_sp) <- CRS("+proj=longlat +datum=WGS84")
+# Read in vertical network
+SRI_vert_all <- readRDS("SRI_vert_all.RData")
 
-# Transform to a UTM CRS that uses km as the unit
-dolph.sp <- spTransform(coords_sp, CRS("+proj=utm +zone=17 +datum=WGS84 +units=m +no_defs"))
+# Now create a list for each year
+filtered_list <- split(filtered_data, filtered_data$Year)
 
-# Use the calculated extent in kernelUD
-kernel <- kernelUD(dolph.sp, h = 1000)
-
-# Calculate Dyadic HRO Matrix: HRO = (Rij/Ri) * (Rij/Rj)
-kov <- kerneloverlaphr(kernel, method = "HR", lev = 95)
-
-# Order data
-order_rows <- rownames(nxn)
-order_cols <- colnames(nxn)
-
-# Apply the order to each matrix in the list
-ecol_all <- kov[order_rows, order_cols]
+# Create a list for Home Range
+ecol_all <- list()
+for (i in seq_along(filtered_list)) {
+  
+  ids <- filtered_list[[i]]$Code
+  coordinates <- filtered_list[[i]][, c("StartLon", "StartLat")]
+ 
+  # Create a SpatialPointsDataFrame with coordinates
+  coords_sp <- SpatialPointsDataFrame(coords = coordinates, data = data.frame(id = ids))
+  
+  # Set CRS to WGS84
+  proj4string(coords_sp) <- CRS("+proj=longlat +datum=WGS84")
+  
+  # Transform to a UTM CRS that uses km as the unit
+  dolph.sp <- spTransform(coords_sp, CRS("+proj=utm +zone=17 +datum=WGS84 +units=m +no_defs"))
+  
+  # Use the calculated extent in kernelUD
+  kernel <- kernelUD(dolph.sp, h = 1000)
+  
+  # Calculate Dyadic HRO Matrix: HRO = (Rij/Ri) * (Rij/Rj)
+  kov <- kerneloverlaphr(kernel, method = "HR", lev = 95)
+  
+  # Order data
+  order_rows <- rownames(SRI_vert_all)
+  order_cols <- colnames(SRI_vert_all)
+  
+  # Apply the order to each matrix in the list
+  ecol_all[[i]] <- kov[order_rows, order_cols] 
+}
 
 # Save eco dat
 saveRDS(ecol_all, "ecol_all.RData")
-
-# Read ecol data
-ecol_all <- readRDS("ecol_all.RData")
 
 # Read relatedness network -----------------------------------------
 ILV_pat <- read.csv("Paternity_data.csv") 
@@ -429,40 +377,11 @@ kinship_matrix <- kinship(ped)
 relate_all <- kinship_matrix[1:117, 1:117]
 saveRDS(kinship_matrix, "kinship_matrix.RData")
 
-# Order of Acquisition -----------------------------------------
+#######################################################################################################################################
+####### PART 2: Apply NBDA to HI data:
 
-# Read ILVs
-ILV_all <- read.csv("ILV_dem.csv", header=TRUE, sep=",")
-ILV_all <- ILV_all[, c("Alias", "HI_Indiv", "Mom", "Sex", "BirthYear")]
-
-# Read orig_data
-orig_data <- read.csv("orig_data.csv")
-orig_data <- subset(orig_data, Code %in% ILV_all$Alias)
-orig_data$Confirmed_HI <- ifelse(orig_data$ConfHI != "0", 1, 0)
-
-# Create demonstrator column
-ILV_all$Demons_HI_forage <- ifelse(
-  ILV_all$Alias %in% unique(orig_data$Code[orig_data$Confirmed_HI == 1 & orig_data$Year == 1995]),
-  "yes",
-  "no"
-)
-
-# Create acquisition data
-# Step 1: Filter orig_data for confirmed HI behavior after 1995
-hi_data <- orig_data[orig_data$Confirmed_HI == 1 & orig_data$Year > 1995, ]
-
-# Step 2: Get the first year each Alias showed the behavior
-first_hi_year <- aggregate(Year ~ Code, data = hi_data, FUN = min)
-
-# Step 3: Create a new column for order of acquisition
-first_hi_year$HI_Order_acquisition <- first_hi_year$Year - 1995
-
-# Step 4: Merge this info back into ILV_all
-ILV_all <- merge(ILV_all, first_hi_year[, c("Code", "HI_Order_acquisition")],
-                 by.x = "Alias", by.y = "Code", all.x = TRUE)
-
-# Step 5: Replace NA with 0 for individuals who had the behavior in 1995
-ILV_all$HI_Order_acquisition[ILV_all$Demons_HI_forage == "yes"] <- 0
+# Add ILV data
+ILV_all <- read.csv("ILV_all_subset.csv")
 
 # Extract Confirmed_HI (learners and demonstrators)
 Confirmed_HI <- subset(ILV_all, subset = ILV_all$HI_Indiv == 1)
@@ -511,11 +430,31 @@ Sex <- ifelse(ILV_all$Sex == "Female", 1, 0)
 ILV_all$BirthYear <- as.numeric(ILV_all$BirthYear)
 Age <- ifelse(is.na(ILV_all$BirthYear), 1985, ILV_all$BirthYear)
 
-n.assMatrix <- 3 # number of matrices
-assMatrix.B <- array(data = c(SRI_vert_all, SRI_hor_no_vert_all, ecol_all 
-                              #, relate
-                              ), dim=c(nrow(SRI_vert_all), ncol(SRI_vert_all), n.assMatrix)) # create an array with the four matrices
+# Read in matrices
+SRI_vert_all <- readRDS("SRI_vert_all.RData")
+SRI_hor_no_vert_all <- as.array(readRDS("SRI_hor_no_vert_all.RData"))
+ecol_all <- as.array(readRDS("ecol_all.RData"))
 
+# Turn vertical matrix into list
+SRI_vert_all <- replicate(18, SRI_vert_all, simplify = FALSE)
+SRI_vert_all <- as.array(SRI_vert_all)
+
+# Create array with all matrices
+n_indiv <- nrow(SRI_vert_all[[1]])
+n_years <- length(SRI_vert_all)
+n_networks <- 3
+
+# Initialize the 4D array
+assMatrix.B <- array(NA, dim = c(n_indiv, n_indiv, n_networks, n_years))
+
+# Fill the array
+for (t in 1:n_years) {
+  assMatrix.B[,,1,t] <- SRI_vert_all[[t]]
+  assMatrix.B[,,2,t] <- SRI_hor_no_vert_all[[t]]
+  assMatrix.B[,,3,t] <- ecol_all[[t]]
+}
+
+# ILVs
 Sex <- matrix(data = Sex, nrow=length(IDs), byrow=F) # all ILVs need to go into a matrix
 Age <- matrix(data = Age, nrow=length(IDs), byrow=F)
 
@@ -531,7 +470,7 @@ vec <- NULL
 for (i in 1:length(HI_filter2)){
   a <- which(IDs==HI_filter2[i])
   vec[i] <- a
-} # get position of spongers with no maternity data
+} # get position of HI with no maternity data
 # they get set to 0 in the presence matrix (NBDAfilterfunction)
 
 filter <- paste0(label,"_", vec)
@@ -544,6 +483,13 @@ nbdaDataHI.C <- nbdaData(label=label, assMatrix=assMatrix.B, asoc_ilv=ILVs,
 # apply filter to exclude individuals without maternity data as learners
 nbdaDataHI.C.filter <- filteredNBDAdata(nbdadata=nbdaDataHI.C, filter="id", exclude=filter)
 
+#Then fit the model:
+model1_multiNet<-oadaFit(nbdaDataHI.C)
+#And get the output:
+data.frame(Variable=model1_multiNet@varNames,MLE=model1_multiNet@outputPar,SE=model1_multiNet@se)
+
+# Save filtered data
+saveRDS(nbdaDataHI.C.filter, "nbdaDataHI.C.filter.RData")
 
 # the first four positions correspond to the networks (vertical, horizontal, ecology, relatedness),
 # the following 4 to int.ILV, then 4 to asoc ILV and then 4 to multi ILV
@@ -595,6 +541,9 @@ constraintsVect <- cbind(constraintsVect, matrix(0,ncol=num_ILVs, nrow=length(co
 
 constraintsVectMatrix<-constraintsVect
 
+# Save vect matrix
+saveRDS(constraintsVectMatrix, "constraintsVectMatrix.RData")
+
 # Each line of the resulting object specifies a model
 # Each element in the line corresponds to a parameter in the model. When an element is zero, that paramter is constrained
 # =0. When two elements have the same value, they are constrained to have the same value (not relevant here).
@@ -609,20 +558,15 @@ constraintsVectMatrix[1,]
 # NBDA model). In our analysis we estimate the effects each ILV has on asocial and social learning independently, so these parameters
 # are constrained to be zero for all models fitted.
 
-#######################################################################################################################################
-#######################################################################################################################################
-
 # run NBDA using the NBDA Data object and the constraitnsVectMatrix
 # this fits every model specified by the constrainstsVectMatrix matrix
 tableHI.C.filter<-oadaAICtable(nbdadata=nbdaDataHI.C.filter, constraintsVectMatrix=constraintsVectMatrix,writeProgressFile = T)
 print(tableHI.C.filter)
 
 save(tableHI.C.filter, file="AIC table HI.Rdata")
-load("AIC table HI.Rdata")
+load("AIC_table_HI.Rdata")
 
-
-write.csv(as.data.frame(tableHI.C.filter@printTable), "AIC table sponging.csv")
-
+write.csv(as.data.frame(tableHI.C.filter@printTable), "AIC table HI.csv")
 
 ##Create a new object with a printTable that excludes unfitted model
 newTableHI<-tableHI.C.filter
@@ -669,22 +613,22 @@ variable_support
 write.csv(variable_support, file="variable_support_HI.csv")
 
 # extract model averaged medians
-MLE_med  <- modelAverageEstimates(newTableHI,averageType = "median")
+MLE_med <- modelAverageEstimates(newTableHI,averageType = "median")
 MLE_med
 
 write.csv(MLE_med, "MLE_HI.csv")
 
-
 #######################################################################################################################################
-#Getting 95% confidence intervals using profile likelihood techniques
+####### PART 3: 95% confidence intervals using profile likelihood:
+
 #This is vital for s parameters since CIs based on SEs will be highly misleading due to frequent assymetry in the profile likelihood
-#######################################################################################################################################
-
-print(newTableHI)[1:10,]
-
 # constraintsVectMatrix[4076,] for best model (vertical social learning + social.sex)
 
-bestModelData<-constrainedNBDAdata(nbdadata=nbdaDataHI.C.filter,constraintsVect=constraintsVectMatrix[112,])
+# Read filtered data and matrix
+nbdaDataHI.C.filter <- readRDS("nbdaDataHI.C.filter.RData")
+constraintsVectMatrix <- readRDS("constraintsVectMatrix.RData")
+
+bestModelData<-constrainedNBDAdata(nbdadata=nbdaDataHI.C.filter,constraintsVect=constraintsVectMatrix[111,]) # ask Sonja how to find this?
 model.best.social<-oadaFit(bestModelData)
 model.best.social@outputPar
 # [1] 1.233004e+10 -4.840486e+00
@@ -704,7 +648,6 @@ profLikCI(which=1,model=model.best.social,lowerRange=c(30,40))
 #Lower CI Upper CI
 #33.08928       Inf
 
-######################################################################################################################
 #To explain why we cannot set an upper limit on s, we extract a table with a row for each acquisition event
 #Each row we get the connection of the individual that learned
 #The total connections to informed individuals across the population- in this case equal to the number of dolphins with a sponging mother, 
@@ -713,10 +656,10 @@ profLikCI(which=1,model=model.best.social,lowerRange=c(30,40))
 
 eventTable<-NULL
 for(i in 1:9)
-{eventTable<-rbind(eventTable,(c((bestModelData2@stMetric[bestModelData2@event.id==unique(bestModelData2@event.id)[i]])[
-  bestModelData2@status[bestModelData2@event.id==unique(bestModelData2@event.id)[i]]==1],
-  sum(bestModelData2@stMetric[bestModelData2@event.id==unique(bestModelData2@event.id)[i]]),
-  max(bestModelData2@stMetric[bestModelData2@event.id==unique(bestModelData2@event.id)[i]])))
+{eventTable<-rbind(eventTable,(c((bestModelData@stMetric[bestModelData@event.id==unique(bestModelData@event.id)[i]])[
+  bestModelData@status[bestModelData@event.id==unique(bestModelData@event.id)[i]]==1],
+  sum(bestModelData@stMetric[bestModelData@event.id==unique(bestModelData@event.id)[i]]),
+  max(bestModelData@stMetric[bestModelData@event.id==unique(bestModelData@event.id)[i]])))
 )
 }
 dimnames(eventTable)[[2]]<-c("Connection of Learner","Sum of Connections","Maximum Connection")
@@ -728,9 +671,6 @@ eventTable
 #In any diffusion where, for every event, the individual to acquire the behaviour is always the one with the maximum connection to informed
 #individuals (even if it is joint maximum), we cannot set an upper limit on s with OADA. Since the next individual to learn is always the 
 #one that the network would predict as being most likely (or joint most likely), a value of s=Inf is plausible.
-###########################################################
-
-
 
 # which=2 extracts second parameter (gender)
 plotProfLik(which=2,model=model.best.social,range=c(-10,-2), resolution=20)
@@ -751,7 +691,7 @@ prop.solve.social <- oadaPropSolveByST(nbdadata = bestModelData, model=model.bes
 prop.solve.social
 
 #To get the estimates for the lower bound we should find the corresponding value of the other parameters to plug in when s1 is constrained to this value
-bestModelDataS1LowerBound<-constrainedNBDAdata(nbdadata=nbdaDataSPONGING.C.filter,constraintsVect =constraintsVectMatrix[4076,],offset=c(33.08928,rep(0,15)))
+bestModelDataS1LowerBound<-constrainedNBDAdata(nbdadata=nbdaDataHI.C.filter,constraintsVect =constraintsVectMatrix[112,],offset=c(33.08928,rep(0,15)))
 bestModelS1LowerBound<-oadaFit(bestModelDataS1LowerBound,type="asocial")
 bestModelS1LowerBound@outputPar
 #Now plug into the prop solve function in one of these two ways:
