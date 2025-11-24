@@ -22,20 +22,28 @@ source("../Code/functions.R") # nxn
 ILV_all <- read.csv("ILV_dem.csv", header=TRUE, sep=",")
 ILV_all <- ILV_all[, c("Alias", "HI_Indiv", "Mom", "Sex", "BirthYear")]
 
+# Subset original data
+data_1 <- read.csv("93_04_data.csv")
+data_2 <- read.csv("05_14_data.csv")
+orig_data <- merge(data_1, data_2, all = T)
+write.csv(orig_data, "orig_data.csv")
+
 # Read orig_data
 orig_data <- read.csv("orig_data.csv")
-orig_data <- subset(orig_data, Code %in% ILV_all$Alias)
 orig_data$Confirmed_HI <- ifelse(orig_data$ConfHI != "0", 1, 0)
-orig_data$Date <- as.Date(as.character(orig_data$Date), format="%Y-%m-%d")
+orig_data$Date <- as.Date(as.character(orig_data$Date), format="%d-%b-%y")
+
+# Add year
+orig_data$Year <- as.numeric(format(orig_data$Date, format = "%Y"))
 
 # Subset data to first acquisition event
 first_idx <- which(orig_data$Confirmed_HI == 1)[1]
 orig_data <- orig_data[first_idx:nrow(orig_data), ]
 
-# Filter data to include individuals that were seen in all time periods
-tab <- table(orig_data$Code, orig_data$Year)
-codes_in_all_years <- rownames(tab)[rowSums(tab > 5) == ncol(tab)]
-filtered_data <- orig_data[orig_data$Code %in% codes_in_all_years, ]
+# Filter data to include individuals that were seen at least 10 times 
+tab <- table(orig_data$Code)
+codes_in_all <- rownames(tab > 10)
+filtered_data <- orig_data[orig_data$Code %in% codes_in_all, ]
 
 write.csv(filtered_data, "filtered_data.csv")
 
@@ -72,30 +80,6 @@ ILV_all$HI_Order_acquisition[ILV_all$Demons_HI_forage == "yes"] <- 0
 # Save data
 write.csv(ILV_all, "ILV_all_subset.csv")
 
-# Vertical network -----------------------------------------
-
-# Read in original data
-filtered_data <- read.csv("filtered_data.csv") # original data
-
-# Count sightings per Code per Year
-code_counts <- table(filtered_data$Year, filtered_data$Code)
-code_counts_df <- as.data.frame(code_counts)
-names(code_counts_df) <- c("Year", "Code", "Freq")
-
-# Find the demographics of the population
-ILV_pat <- read.csv("Paternity_data.csv")
-
-Codes <- unique(filtered_data$Code)
-ILV_pat <- subset(ILV_pat, Alias %in% Codes)
-
-# Subset paternity data
-ILV_pat <- data.frame(Code = ILV_pat$Alias,
-                          Mom = ILV_pat$Mom)
-SRI_vert_all <- vert.func(ILV_pat)
-
-# Save vert
-saveRDS(SRI_vert_all, "SRI_vert_all.RData")
-
 # Horizontal network -----------------------------------------
 
 # Read in filtered data
@@ -104,17 +88,11 @@ filtered_data <- read.csv("filtered_data.csv")
 # Add individual data
 ILV_all <- read.csv("ILV_all_subset.csv")
 
-# Read in vertical network
-SRI_vert_all <- readRDS("SRI_vert_all.RData")
-
 # Group each individual by date and sighting
 group_data <- filtered_data[,c("Date","Sighting","Code","Year", "ConfHI")]
 group_data$Confirmed_HI <- ifelse(group_data$ConfHI != "0", 1, 0)
 group_data$Group <- cumsum(!duplicated(group_data[1:2])) # Create sequential group # by date
 group_data <- group_data[,c(1, 3, 4, 6, 7)] # Subset ID and group #
-
-# Add date as a date
-group_data$Date <- as.Date(as.character(group_data$Date), format="%Y-%m-%d")
 
 # Subset the data to include observations only from before acquisition
 # 1. Identify Codes to exclude
@@ -147,6 +125,7 @@ group_data <- group_data[keep_rows, ]
 
 # Now create a list for each year
 group_data_list <- split(group_data, group_data$Year)
+saveRDS(group_data_list, "group_data_list.RData")
 
 # Calculate Gambit of the group
 create_gbi <- function(list_years) {
@@ -179,18 +158,30 @@ create_nxn <- function(gbi) {
 
 nxn <- create_nxn(gbi)
 
-# Order data
-id_order <- rownames(SRI_vert_all)
-nxn_ordered <- lapply(nxn, function(mat) mat[id_order, id_order])
-
-# Get rid of vertical data
-SRI_hor_no_vert_all <- lapply(nxn_ordered, function (mat) ifelse(mat == 1, 0, mat))
-
-# Change into array
-SRI_hor_no_vert_all <- lapply(SRI_hor_no_vert_all, function (mat) as.matrix(mat))
-
 # Save nxn
-saveRDS(SRI_hor_no_vert_all, "SRI_hor_no_vert_all.RData")
+saveRDS(nxn, "nxn.RData")
+
+# Vertical network -----------------------------------------
+
+# Read in original data
+filtered_data <- read.csv("filtered_data.csv") 
+
+# Read in Horizontal data
+nxn <- readRDS("nxn.RData")
+
+# Find the demographics of the population
+ILV_pat <- read.csv("Paternity_data.csv")
+
+Codes <- unique(filtered_data$Code)
+ILV_pat <- subset(ILV_pat, Alias %in% Codes)
+
+# Subset paternity data
+ILV_pat <- data.frame(Code = ILV_pat$Alias,
+                          Mom = ILV_pat$Mom)
+SRI_vert_all <- vert.func(ILV_pat)
+
+# Save vert
+saveRDS(SRI_vert_all, "SRI_vert_all.RData")
 
 # Ecological network -----------------------------------------
 # Transform coordinate data into a Spatial Points Dataframe in km
@@ -395,12 +386,12 @@ HI_learners <- as.vector(subset(Confirmed_HI$Alias, subset=Confirmed_HI$Demons_H
 HI_demons <- as.vector(subset(Confirmed_HI$Alias, subset=Confirmed_HI$Demons_HI_forage=="yes"))
 
 # extract ID names from data file
-IDs <- sort(as.vector(unique(orig_data[,"Code"])))
+IDs <- sort(as.vector(unique(filtered_data[,"Code"])))
 
 # extract order of acquisition
 order <- NULL # create an object to store the vector of acquisition
 
-for (i in 1:length(HI_learners)){ # for each sponger, extract the position in the networks and ILV data frame
+for (i in 1:length(HI_learners)){ # for each HI, extract the position in the networks and ILV data frame
   order[i] <- which(IDs==HI_learners[i])
 }
 
@@ -432,12 +423,43 @@ Age <- ifelse(is.na(ILV_all$BirthYear), 1985, ILV_all$BirthYear)
 
 # Read in matrices
 SRI_vert_all <- readRDS("SRI_vert_all.RData")
-SRI_hor_no_vert_all <- as.array(readRDS("SRI_hor_no_vert_all.RData"))
+nxn <- readRDS("nxn.RData")
 ecol_all <- as.array(readRDS("ecol_all.RData"))
+
+# Get rid of vert data in hor network
+SRI_hor_no_vert_all <- lapply(nxn, function(mat) {
+  for (r in rownames(mat)) {
+    for (c in colnames(mat)) {
+      if (!is.na(SRI_vert_all[r, c]) && SRI_vert_all[r, c] == 1) {
+        mat[r, c] <- 0
+      }
+    }
+  }
+  mat
+})
 
 # Turn vertical matrix into list
 SRI_vert_all <- replicate(18, SRI_vert_all, simplify = FALSE)
 SRI_vert_all <- as.array(SRI_vert_all)
+
+# Get rid of IDs without data in nxn
+## Vertical network
+for (i in seq_along(SRI_vert_all)) {
+  # Get the row/column names from the nxn matrix
+  target_names <- rownames(nxn[[i]])
+  
+  # Subset the SRI matrix to match those names
+  SRI_vert_all[[i]] <- SRI_vert_all[[i]][target_names, target_names, drop = FALSE]
+}
+
+# Ecol network
+for (i in seq_along(ecol_all)) {
+  # Get the row/column names from the nxn matrix
+  target_names <- rownames(nxn[[i]])
+  
+  # Subset the SRI matrix to match those names
+  ecol_all[[i]] <- ecol_all[[i]][target_names, target_names, drop = FALSE]
+}
 
 # Create array with all matrices
 n_indiv <- nrow(SRI_vert_all[[1]])
