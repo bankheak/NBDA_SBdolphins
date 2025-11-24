@@ -2,12 +2,14 @@
 
 # load packages
 if(!require(devtools)){install.packages('devtools'); library(devtools)} # To load NBDA
+if(!require(remotes)){install.packages('remotes'); library(remotes)} 
+#remotes::install_github("stan-dev/cmdstanr") # If STBayes doesn't download
 # Install NBDA package
-devtools::install_github("whoppitt/NBDA")
+devtools::install_github("whoppitt/NBDA", force = T)
 # install devtools if not already
 devtools::install_github("michaelchimento/STbayes")
 ## Bayesian
-if(!require(tidyr)){install.packages('tidyr'); library(tidyr)} # array
+if(!require(tidyr)){install.packages('tidyr'); library(tidyr)} 
 if(!require(abind)){install.packages('abind'); library(abind)} # array
 if(!require(STbayes)){install.packages('STbayes'); library(STbayes)} 
 if(!require(ggplot2)){install.packages('ggplot2'); library(ggplot2)} 
