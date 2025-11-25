@@ -1,13 +1,14 @@
 ## --- Bayesian Multi-network Diffusion Analysis --- ##
 
 # load packages
-if(!require(devtools)){install.packages('devtools'); library(devtools)} # To load NBDA
-if(!require(remotes)){install.packages('remotes'); library(remotes)} 
+#if(!require(devtools)){install.packages('devtools'); library(devtools)} # To load NBDA
+#if(!require(remotes)){install.packages('remotes'); library(remotes)} 
 #remotes::install_github("stan-dev/cmdstanr") # If STBayes doesn't download
 # Install NBDA package
-devtools::install_github("whoppitt/NBDA", force = T)
+#devtools::install_github("whoppitt/NBDA")
 # install devtools if not already
-devtools::install_github("michaelchimento/STbayes")
+#devtools::install_github("michaelchimento/STbayes")
+#cmdstanr::set_cmdstan_path(cmdstanr::install_cmdstan())
 ## Bayesian
 if(!require(tidyr)){install.packages('tidyr'); library(tidyr)} 
 if(!require(abind)){install.packages('abind'); library(abind)} # array
@@ -351,12 +352,36 @@ saveRDS(kinship_matrix, "kinship_matrix.RData")
 
 
 #######################################################################################################################################
-####### PART 3: Create acquisition data:
+####### PART 3: Check variation in associations:
+
+
+#######################################################################################################################################
+####### PART 4: Create acquisition data for model input:
 
 # Read in all network data
 nxn <- readRDS("nxn.RData")
 SRI_vert_all <- readRDS("SRI_vert_all.RData")
 ecol_all <- as.array(readRDS("ecol_all.RData"))
+
+# Add zeros to rows that don't have all individuals
+
+# Get all unique IDs across all matrices
+total_ids <- unique(unlist(lapply(nxn, rownames)))
+
+# Update each matrix to include all IDs, filling missing rows/columns with zeros
+nxn_full <- lapply(nxn, function(mat) {
+  # Current IDs in this matrix
+  current_ids <- rownames(mat)
+  
+  # Create a full zero matrix with all IDs
+  full_mat <- matrix(0, nrow = length(total_ids), ncol = length(total_ids),
+                     dimnames = list(total_ids, total_ids))
+  
+  # Fill in existing values
+  full_mat[current_ids, current_ids] <- mat
+  
+  return(full_mat)
+})
 
 # Turn vertical matrix into list
 SRI_vert_all <- replicate(20, SRI_vert_all, simplify = FALSE)
@@ -364,13 +389,6 @@ SRI_vert_all <- as.array(SRI_vert_all)
 
 # Subset nxn
 nxn <- nxn[3:22]
-# Get the intersection of row names across all matrices
-common_names <- Reduce(intersect, lapply(nxn, rownames))
-
-# Subset each matrix to include only those common names
-for (i in seq_along(nxn)) {
-  nxn[[i]] <- nxn[[i]][common_names, common_names, drop = FALSE]
-}
 
 # Get rid of IDs without data in nxn
 ## Vertical network
@@ -391,42 +409,20 @@ for (i in seq_along(ecol_all)) {
   ecol_all[[i]] <- ecol_all[[i]][target_names, target_names, drop = FALSE]
 }
 
-# Prepare random effect for MCMC
-num_nodes <- lapply(nxn, function(df) dim(df)[1])
-node_names <- lapply(nxn, function(df) colnames(df))
-
-# Separate IDs into i and j
-node_ids_i <- lapply(num_nodes, function(df) matrix(rep(1:df, each = df), nrow = df, ncol = df))
-node_ids_j <- lapply(node_ids_i, function(df) t(df))
-
-# Abind nxn
-upper_tri <- lapply(nxn, function(df) upper.tri(df, diag = TRUE))
-edge_nxn <- abind(lapply(nxn, function(mat) mat[upper.tri(mat, diag = TRUE)]), along = 2)
-
-# Create the edge_list
-n_mats <- ncol(edge_nxn)
-n_edges <- nrow(edge_nxn)
-
-# Flatten all values
-values <- as.vector(edge_nxn)
-
-# Create group labels (1 to n_mats repeated for each row)
-groups <- rep(1:n_mats, each = n_edges)
-
-# Combine into a data frame
-edge_data <- data.frame(value = values, group = groups)
-
-one <- lapply(seq_along(node_ids_i), function(i) factor(as.vector(node_names[[i]][node_ids_i[[i]][upper_tri[[i]]]]), levels = node_names[[i]]))
-two <- lapply(seq_along(node_ids_j), function(i) factor(as.vector(node_names[[i]][node_ids_j[[i]][upper_tri[[i]]]]), levels = node_names[[i]]))
-
-# Create the edge_list
-edge_list = data.frame(focal = unlist(one),
-                       other = unlist(two),
-                       trial = 1,
-                       assoc = edge_data[, 1],
-                       time = edge_data[, 2])
-#HRO = unlist(lapply(kov, function (df) df[upper.tri(df, diag = TRUE)])),
-#vert = )
+# Put matrices into data frame
+edge_list <- do.call(rbind, lapply(seq_along(nxn), function(t) {
+  mat <- nxn[[t]]
+  ids <- colnames(mat)  # or rownames(mat), assuming square
+  upper_idx <- which(upper.tri(mat, diag = TRUE), arr.ind = TRUE)
+  
+  data.frame(
+    focal = ids[upper_idx[, 1]],
+    other = ids[upper_idx[, 2]],
+    trial = 1,
+    assoc = mat[upper_idx],
+    time = t
+  )
+}))
 
 # Read in full data
 filtered_data <- read.csv("filtered_data.csv")
@@ -462,12 +458,6 @@ ILV_all <- merge(ILV_all, first_hi_year[, c("Code", "HI_Order_acquisition")],
 # Step 5: Replace NA with 0 for individuals who had the behavior in 1995
 ILV_all$HI_Order_acquisition[ILV_all$Demons_HI_forage == "yes"] <- 0
 
-# Save data
-write.csv(ILV_all, "ILV_all_subset.csv")
-
-# Add ILV data
-ILV_all <- read.csv("ILV_all_subset.csv")
-
 # Add end time
 ILV_all$t_end <- max(na.omit(ILV_all$HI_Order_acquisition))
 
@@ -483,16 +473,13 @@ ILV_all$trial <- 1
 # Get rid of other columns
 event_data <- ILV_all[, c("trial", "id", "time", "t_end")]
 
-# Prepare individual-level variables
-ILV_all <- subset(ILV_all, Alias %in% unique(edge_list$focal))
-
 ILV_all$Sex <- ifelse(ILV_all$Sex == "Female", 1, 0)
 ILV_all$BirthYear <- as.numeric(ILV_all$BirthYear)
 ILV_all$BirthYear <- ifelse(is.na(ILV_all$BirthYear), 1985, ILV_all$BirthYear)
 
 # Constant ILVs
 ILV_c <- data.frame(id = ILV_all$Alias,
-                      age = ILV_all$Sex)
+                      sex = ILV_all$Sex)
 # Time varying ILVs
 ILV_tv <- data.frame(
   trial = 1,
@@ -503,7 +490,7 @@ ILV_tv <- data.frame(
     rep(ILV_all$BirthYear, each = 20)
 )
 
-# Separate HI Behaviors
+# Separate HI Behaviors to create weighted HI prop variable
 #' BG = Beg: F, G, H
 #' SD = Scavenge and Depredation: A, B, C, D, E
 #' FG = Fixed Gear Interaction: P
@@ -581,13 +568,40 @@ Prop_HI <- function(IDbehav) {
 prob_HI <- Prop_HI(IDbehav_HI)
 
 # Convert list of HIprop vectors into a matrix
-HI_matrix <- do.call(cbind, lapply(prob_HI, function(x) x$HIprop))
+HI_matrix <- do.call(rbind, lapply(seq_along(prob_HI), function(t) {
+  dat <- prob_HI[[t]]
+  ids <- dat$Code
+  HIProp <- dat$HIprop
+  
+  data.frame(
+    id = ids,
+    HIProp = HIProp,
+    time = t
+  )
+}))
 
 # Order edge data
 edge_list <- edge_list[order(edge_list$time), ]
 
+# Add vertical network to edge_list
+edge_list_vert <- do.call(rbind, lapply(seq_along(SRI_vert_all), function(t) {
+  mat <- SRI_vert_all[[t]]
+  ids <- colnames(mat)  # or rownames(mat), assuming square
+  upper_idx <- which(upper.tri(mat, diag = TRUE), arr.ind = TRUE)
+  
+  data.frame(
+    focal = ids[upper_idx[, 1]],
+    other = ids[upper_idx[, 2]],
+    trial = 1,
+    assoc = mat[upper_idx],
+    time = t
+  )
+}))
+
+edge_list <- merge(edge_list, edge_list_vert, all = T)
+
 # Add transmission weights
-ILV_tv$weight <- as.vector(t(HI_matrix))
+ILV_tv$weight <- HI_matrix$HIProp
 
 # Input data
 data_list <- import_user_STb(
@@ -598,10 +612,22 @@ data_list <- import_user_STb(
   ILVi = c("age", "weight"),
   ILVs = c("sex")
 )
+
+# For test
+edge_list_test <- edge_list$assoc
+
 data_list <- import_user_STb(
   event_data = event_data,
-  networks = edge_list
+  networks = edge_list_test
 )
+
+saveRDS(data_list, "data_list.RData")
+
+#######################################################################################################################################
+####### PART 5: Run the model and summary outputs:
+
+# Input data_list
+data_list <- readRDS("data_list.RData")
 
 # Generate the model
 model_full <- generate_STb_model(data_list, gq = T, est_acqTime = T)
@@ -615,3 +641,108 @@ full_fit <- fit_STb(data_list,
                     iter = 2000,
                     refresh=1000
 )
+
+STb_save(full_fit, output_dir = "cmdstan_saves", name="my_first_fit")
+
+# View output
+STb_summary(full_fit, digits = 3)
+
+#' The most important output are the intrinsic rate (lambda_0), 
+#' and the relative strength of social transmission (s), whose 
+#' interpretations are the same as the NBDA package. The relative 
+#' strength of social transmission (s = s_prime / lambda_0) is generally 
+#' what we’re after. %ST for network n is reported as percent_ST[n]. This 
+#' is a single-network model, thus percent_ST[1] is the estimated percentage 
+#' of events that occurred through social transmission. The [1] refers to 
+#' the “assoc” network, as we’ve only given a single network. If you fit a 
+#' multi-network model, all networks will have an estimate. For a number of 
+#' reasons, STbayes actually fits lambda_0 and social transmission 
+#' rate (s_prime) on the log scale. The linear transformation of s_prime 
+#' itself usually isn’t reported and is excluded from the output, but you 
+#' could calculate it yourself from the fit.
+
+# Posterior Predictive Checks
+# Cumulative distribution curve
+plot_data_obs <- event_data %>%
+  filter(time > 0, time <= t_end) %>% # exclude demonstrators (time == 0) and censored (time > t_end)
+  group_by(trial) %>%
+  arrange(time, .by_group = TRUE) %>%
+  mutate(
+    cum_prop = row_number() / n(),
+    type = "observed"
+  ) %>%
+  select(trial, time, cum_prop, type) %>%
+  ungroup()
+
+# add in 0,0 starting point
+plot_data_obs <- bind_rows(
+  plot_data_obs,
+  plot_data_obs %>%
+    distinct(trial) %>%
+    mutate(time = 0, cum_prop = 0, type = "observed")
+) %>%
+  arrange(trial, time)
+
+draws_df <- as_draws_df(full_fit$draws(variables = "acquisition_time", inc_warmup = FALSE))
+
+# pivot longer
+ppc_long <- draws_df %>%
+  select(starts_with("acquisition_time[")) %>%
+  pivot_longer(
+    cols = everything(),
+    names_to = c("trial", "ind"),
+    names_pattern = "acquisition_time\\[(\\d+),(\\d+)\\]",
+    values_to = "time"
+  ) %>%
+  mutate(
+    trial = as.integer(trial),
+    ind = as.integer(ind),
+    draw = rep(1:(nrow(draws_df)), 
+               each = length(unique(.$trial)) * length(unique(.$ind)))
+  )
+
+# thin sample for plotting
+sample_idx <- sample(c(1:max(ppc_long$draw)), 100)
+ppc_long <- ppc_long %>% filter(draw %in% sample_idx)
+
+# build cumulative curves per draw
+plot_data_ppc <- ppc_long %>%
+  group_by(draw, trial, time) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  group_by(draw, trial) %>%
+  arrange(time) %>%
+  mutate(cum_prop = cumsum(n) / data_list$Q)
+
+# add in 0,0 starting point
+plot_data_ppc <- bind_rows(
+  plot_data_ppc,
+  plot_data_ppc %>%
+    distinct(trial, draw) %>%
+    mutate(time = 0, cum_prop = 0, type = "ppc")
+) %>%
+  arrange(trial, time)
+
+# plot it
+ggplot() +
+  geom_line(data = plot_data_ppc, 
+            aes(x = time, y = cum_prop, 
+                group = interaction(draw, trial)), alpha = .1) +
+  geom_line(data = plot_data_obs, aes(x = time, y = cum_prop), linewidth = 1) +
+  labs(x = "Time", y = "Cumulative proportion informed", color = "Trial") +
+  theme_minimal()
+
+# Estimated versus observed 
+acqdata = extract_acqTime(full_fit, data_list)
+
+ggplot(acqdata, aes(x = observed_time, y = median_time)) +
+  geom_segment(
+    aes(x = observed_time, xend = observed_time, 
+        y = median_time, yend = observed_time),
+    color = "red",
+    alpha = 0.3) +
+  geom_point(size = 2) +
+  geom_abline(intercept = 0, slope = 1, color = "black", linetype = "dashed") +
+  labs(x = "Observed time", y = "Estimated time") +
+  theme_minimal()
+
+# 
