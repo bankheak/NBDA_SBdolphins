@@ -14,6 +14,22 @@ library(tcltk)
 library(survival)
 library(raster)
 
+# NULL PERMUTATIONS -------------------------------------------------------
+#' @description shuffles binary matrices under different restrictions. 
+#' @param mat A quantitative matrix
+#' @param iter Number of random matrices to be created 
+#' @param model Function to be chosen.
+#' @param ... Further arguments from \code{permatswap} or \code{permatfull}
+#' @return a list with \code{iter} random matrices
+#' @details Totally restricted null model is called. Cell values are permuted restricting all features of the original matrix: column sums, row sums, matrix fill and total sum.
+#' @references \code{citation("vegan")}
+
+null <- function (mat, iter, ...){
+  require(vegan)
+  aux <- permatswap(mat, times=iter, method="quasiswap", fixedmar="both", shuffle="both", mtype="prab")
+  return(aux$perm)
+}
+
 # VERTICAL LEARNING INDEX ------------------------------------------------------
 #' @description This function creates an association matrix using the 1 for mother and calf pairs 0 for all other pairs. 
 #' @param dat A data frame depicting IDs and their mothers

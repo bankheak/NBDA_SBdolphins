@@ -22,6 +22,7 @@ if(!require(sf)){install.packages('sf'); library(sf)} # Convert degrees to meter
 if(!require(sp)){install.packages('sp'); library(sp)} # Convert degrees to meters
 if(!require(adehabitatHR)){install.packages('adehabitatHR'); library(adehabitatHR)} # Caluculate MCPs and Kernel density 
 if(!require(kinship2)){install.packages('kinship2'); library(kinship2)} # genetic relatedness
+if(!require(doParallel)){install.packages('doParallel'); library(doParallel)} # for faster computing
 
 # all networks available under https://datadryad.org/review?doi=doi:10.5061/dryad.sc26m6c.
 setwd("../Data") # set working directory
@@ -354,6 +355,72 @@ saveRDS(kinship_matrix, "kinship_matrix.RData")
 #######################################################################################################################################
 ####### PART 3: Check variation in associations:
 
+# Read in network
+nxn <- readRDS("nxn.RData")
+gbi <- readRDS("gbi.RData")
+
+# Done in the HPC --------------------------------------------------------------
+
+#  Create 1000 random group-by-individual binary matrices
+reps<- 1000
+n.cores <- detectCores()
+registerDoParallel(n.cores)
+
+source("functions.R")
+nF <- lapply(gbi, function (group_index) null(group_index, iter=reps))
+saveRDS(nF, "nF.RData")
+
+#' Calculate the association and CV for each of the 1000 permuted matrices to
+#' create null distribution
+cv_null <- rep(NA,reps)
+
+foreach(i = 1:reps, 
+        .combine = c) %dopar% { 
+          sri_null = as.matrix(SRI.func(nF[[i]]))
+          cv_null[i] <- ( sd(sri_null) / mean(sri_null) ) * 100}
+
+stopImplicitCluster()
+
+saveRDS(cv_null, "cv_null.RData")
+
+# Next take results from the HPC ------------------------------------------------
+
+# Read in null cv values for one year
+cv_null <- readRDS("../data/cv_years.RData")
+## Remove NAs, if any
+# cv_null = cv_null[!is.na(cv_null)]
+
+# Calculate the CV of the observation association data
+# CV = (SD/mean)*100
+cv_obs <- lapply(nxn, function (df) {(sd(df) / mean(df)) * 100})  # Very high CV = unexpectedly 
+# high or low association indices in the empirical distribution
+
+# Calculate 95% confidence interval, in a two-tailed test
+cv_ci = lapply(cv_null, function (df) {quantile(df, probs=c(0.025, 0.975), type=2)})
+
+# Check whether pattern of connections is non-random
+par(mfrow=c(2, 1))
+
+# Create a list to store the histograms
+hist_cvs <- list()
+
+# Create histograms for each element in cv_null
+for (i in seq_along(cv_null)) {
+  hist_cvs[[i]] <- hist(cv_null[[i]], 
+                        breaks=50,
+                        xlim = c(min(cv_null[[i]]), max(cv_obs[[i]] + 10)),
+                        col='grey70',
+                        main = NULL,
+                        xlab="Null CV SRI")
+  
+  # Add lines for empirical CV, 2.5% CI, and 97.5% CI
+  abline(v= cv_obs[[i]], col="red")
+  abline(v= cv_ci[[i]], col="blue")
+  abline(v= cv_ci[[i]], col="blue")
+}
+
+#' This shows whether there are more preferred/avoided 
+#' relatioNPhips than we would expect at random
 
 #######################################################################################################################################
 ####### PART 4: Create acquisition data for model input:
