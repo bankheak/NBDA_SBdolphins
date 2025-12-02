@@ -8,7 +8,7 @@ setwd("../Data")
 
 # Read in data
 nxn <- readRDS("nxn.RData")
-ILV_all <- read.csv("ILV_all_subset.csv")
+ILV_all <- read.csv("ILV_dem.csv", header=TRUE, sep=",")
 
 # Subset data
 for (i in seq_along(nxn)) {
@@ -30,7 +30,6 @@ for (i in seq_along(nxn)) {
 }
 
 # Edgelist: Nodes (i & j) and edge (or link) weight
-n.cores <- detectCores()
 source("../code/functions.R")
 
 ## Create social network
@@ -42,6 +41,7 @@ net_list <- lapply(nxn, function (df) {
 })
 
 # Create a dynamic network object
+
 # Years for each matrix
 years <- 1995:2014
 
@@ -49,8 +49,11 @@ years <- 1995:2014
 dyn_net <- networkDynamic(
   network.list = net_list,
   onsets = years,
+  vertex.pid="vertex.names",
   termini = years + 1  # each network lasts 1 year
 )
+
+saveRDS(dyn_net, "dyn_net.RData")
 
 # Get all edge IDs in the dynamic network
 all_edge_ids <- seq_len(network.edgecount(dyn_net))
@@ -75,6 +78,7 @@ for (i in seq_along(net_list)) {
 
 # Assume filtered_data has columns: Alias, Year, Conf_HI
 # Get all unique node names
+filtered_data <- read.csv("filtered_data.csv")
 all_nodes <- unique(filtered_data$Code)
 
 # Add dynamic color attribute

@@ -24,9 +24,8 @@ if(!require(adehabitatHR)){install.packages('adehabitatHR'); library(adehabitatH
 if(!require(kinship2)){install.packages('kinship2'); library(kinship2)} # genetic relatedness
 if(!require(doParallel)){install.packages('doParallel'); library(doParallel)} # for faster computing
 
-# all networks available under https://datadryad.org/review?doi=doi:10.5061/dryad.sc26m6c.
+# Set relative path working directory
 setwd("../Data") # set working directory
-source("../Code/functions.R") # nxn
 
 #######################################################################################################################################
 ####### PART 1: Wrangling data:
@@ -48,10 +47,6 @@ orig_data$Date <- as.Date(as.character(orig_data$Date), format="%d-%b-%y")
 
 # Add year
 orig_data$Year <- as.numeric(format(orig_data$Date, format = "%Y"))
-
-# Subset data to first acquisition event
-first_idx <- which(orig_data$Confirmed_HI == 1)[1]
-orig_data <- orig_data[first_idx:nrow(orig_data), ]
 
 # Filter data to include individuals that were seen at least 10 times 
 tab <- table(orig_data$Code)
@@ -125,6 +120,7 @@ gbi <- create_gbi(group_data_list)
 saveRDS(gbi, "gbi.RData")
 
 # Create association matrix
+source("../Code/functions.R") # SRI.func
 create_nxn <- function(gbi) {
   n.cores <- detectCores()
   system.time({
@@ -182,8 +178,19 @@ filtered_list <- split(filtered_data, filtered_data$Year)
 ecol_all <- list()
 for (i in seq_along(filtered_list)) {
   
-  ids <- filtered_list[[i]]$Code
-  coordinates <- filtered_list[[i]][, c("StartLon", "StartLat")]
+  # Remove NAs and invalid coordinates
+  clean_data <- filtered_list[[i]][
+    !is.na(filtered_list[[i]]$StartLon) &
+      !is.na(filtered_list[[i]]$StartLat) &
+      filtered_list[[i]]$StartLon >= -180 & filtered_list[[i]]$StartLon <= 180 &
+      filtered_list[[i]]$StartLat >= -90 & filtered_list[[i]]$StartLat <= 90,
+  ]
+  
+  # Keep only individuals with at least 5 observations
+  clean_data <- clean_data[clean_data$Code %in% names(which(table(clean_data$Code) >= 5)), ]
+  
+  ids <- clean_data$Code
+  coordinates <- clean_data[, c("StartLon", "StartLat")]
   
   # Create a SpatialPointsDataFrame with coordinates
   coords_sp <- SpatialPointsDataFrame(coords = coordinates, data = data.frame(id = ids))
@@ -201,11 +208,12 @@ for (i in seq_along(filtered_list)) {
   kov <- kerneloverlaphr(kernel, method = "HR", lev = 95)
   
   # Order data
-  order_rows <- rownames(SRI_vert_all)
-  order_cols <- colnames(SRI_vert_all)
+  #order_rows <- rownames(SRI_vert_all)
+  #order_cols <- colnames(SRI_vert_all)
   
   # Apply the order to each matrix in the list
-  ecol_all[[i]] <- kov[order_rows, order_cols] 
+  #ecol_all[[i]] <- kov[order_rows, order_cols] 
+  ecol_all[[i]] <- kov
 }
 
 # Save eco dat
@@ -359,7 +367,7 @@ saveRDS(kinship_matrix, "kinship_matrix.RData")
 nxn <- readRDS("nxn.RData")
 gbi <- readRDS("gbi.RData")
 
-# Done in the HPC --------------------------------------------------------------
+# Done in the HPC 
 
 #  Create 1000 random group-by-individual binary matrices
 reps<- 1000
@@ -383,7 +391,7 @@ stopImplicitCluster()
 
 saveRDS(cv_null, "cv_null.RData")
 
-# Next take results from the HPC ------------------------------------------------
+# Next take results from the HPC
 
 # Read in null cv values for one year
 cv_null <- readRDS("../data/cv_years.RData")
@@ -436,7 +444,7 @@ ecol_all <- as.array(readRDS("ecol_all.RData"))
 total_ids <- unique(unlist(lapply(nxn, rownames)))
 
 # Update each matrix to include all IDs, filling missing rows/columns with zeros
-nxn_full <- lapply(nxn, function(mat) {
+nxn_1 <- lapply(nxn, function(mat) {
   # Current IDs in this matrix
   current_ids <- rownames(mat)
   
@@ -454,10 +462,19 @@ nxn_full <- lapply(nxn, function(mat) {
 SRI_vert_all <- replicate(20, SRI_vert_all, simplify = FALSE)
 SRI_vert_all <- as.array(SRI_vert_all)
 
-# Subset nxn
-nxn <- nxn[3:22]
+# Subset nxn and ecol
+nxn_1 <- nxn_1[3:22]
+ecol_all <- ecol_all[3:22]
 
-# Get rid of IDs without data in nxn
+# Get rid of IDs without data in nxn from ecol data
+for (i in seq_along(ecol_all)) {
+  # Get the row/column names from the nxn matrix
+  target_names <- rownames(ecol_all[[i]])
+  
+  # Subset the SRI matrix to match those names
+  nxn_1[[i]] <- nxn_1[[i]][target_names, target_names, drop = FALSE]
+}
+
 ## Vertical network
 for (i in seq_along(SRI_vert_all)) {
   # Get the row/column names from the nxn matrix
@@ -467,18 +484,27 @@ for (i in seq_along(SRI_vert_all)) {
   SRI_vert_all[[i]] <- SRI_vert_all[[i]][target_names, target_names, drop = FALSE]
 }
 
-# Ecol network
-for (i in seq_along(ecol_all)) {
-  # Get the row/column names from the nxn matrix
-  target_names <- rownames(nxn[[i]])
+# Get all unique IDs across all matrices
+total_ids <- unique(unlist(lapply(nxn_1, rownames)))
+
+# Update each matrix to include all IDs, filling missing rows/columns with zeros
+nxn_full <- lapply(nxn_1, function(mat) {
+  # Current IDs in this matrix
+  current_ids <- rownames(mat)
   
-  # Subset the SRI matrix to match those names
-  ecol_all[[i]] <- ecol_all[[i]][target_names, target_names, drop = FALSE]
-}
+  # Create a full zero matrix with all IDs
+  full_mat <- matrix(0, nrow = length(total_ids), ncol = length(total_ids),
+                     dimnames = list(total_ids, total_ids))
+  
+  # Fill in existing values
+  full_mat[current_ids, current_ids] <- mat
+  
+  return(full_mat)
+})
 
 # Put matrices into data frame
-edge_list <- do.call(rbind, lapply(seq_along(nxn), function(t) {
-  mat <- nxn[[t]]
+edge_list <- do.call(rbind, lapply(seq_along(nxn_full), function(t) {
+  mat <- nxn_full[[t]]
   ids <- colnames(mat)  # or rownames(mat), assuming square
   upper_idx <- which(upper.tri(mat, diag = TRUE), arr.ind = TRUE)
   
@@ -492,7 +518,6 @@ edge_list <- do.call(rbind, lapply(seq_along(nxn), function(t) {
 }))
 
 # Read in full data
-filtered_data <- read.csv("filtered_data.csv")
 ILV_all <- read.csv("ILV_dem.csv", header=TRUE, sep=",")
 ILV_all <- ILV_all[, c("Alias", "HI_Indiv", "Mom", "Sex", "BirthYear")]
 
@@ -501,22 +526,29 @@ ILV_all <- subset(ILV_all, Alias %in% unique(edge_list$focal))
 
 # Add order of acquisition data
 # Create demonstrator column
-ILV_all$Demons_HI_forage <- ifelse(
-  ILV_all$Alias %in% unique(filtered_data$Code[filtered_data$Confirmed_HI == 1 & 
-                                                 filtered_data$Date == min(filtered_data$Date)]),
-  "yes",
-  "no"
-)
+filtered_data <- read.csv("filtered_data.csv")
+filtered_data <- subset(filtered_data, Year %in% 1995:2014)
+
+# Find the first year globally where Confirmed_HI == 1
+first_year <- min(filtered_data$Year[filtered_data$Confirmed_HI == 1])
+
+# Get individuals who had Confirmed_HI == 1 in that first year
+first_year_individuals <- unique(filtered_data$Code[
+  filtered_data$Confirmed_HI == 1 & filtered_data$Year == first_year
+])
+
+# Assign yes/no based on that
+ILV_all$Demons_HI_forage <- ifelse(ILV_all$Alias %in% first_year_individuals, "yes", "no")
 
 # Create acquisition data
 # Step 1: Filter filtered_data for confirmed HI behavior after first date
-hi_data <- filtered_data[filtered_data$Confirmed_HI == 1 & filtered_data$Year != min(filtered_data$Year), ]
+hi_data <- filtered_data[filtered_data$Confirmed_HI == 1 & filtered_data$Year != first_year, ]
 
 # Step 2: Get the first year each Alias showed the behavior
 first_hi_year <- aggregate(Year ~ Code, data = hi_data, FUN = min)
 
 # Step 3: Create a new column for order of acquisition
-first_hi_year$HI_Order_acquisition <- as.numeric(first_hi_year$Year - min(first_hi_year$Year))
+first_hi_year$HI_Order_acquisition <- as.numeric(first_hi_year$Year)
 
 # Step 4: Merge this info back into ILV_all
 ILV_all <- merge(ILV_all, first_hi_year[, c("Code", "HI_Order_acquisition")],
@@ -525,13 +557,22 @@ ILV_all <- merge(ILV_all, first_hi_year[, c("Code", "HI_Order_acquisition")],
 # Step 5: Replace NA with 0 for individuals who had the behavior in 1995
 ILV_all$HI_Order_acquisition[ILV_all$Demons_HI_forage == "yes"] <- 0
 
-# Add end time
-ILV_all$t_end <- max(na.omit(ILV_all$HI_Order_acquisition))
-
 # Change individuals who didn't require behavior to t_end +1
 ILV_all$time <- ifelse(is.na(ILV_all$HI_Order_acquisition), 
                                        max(na.omit(ILV_all$HI_Order_acquisition)) + 1, 
                                        ILV_all$HI_Order_acquisition)
+
+# Get unique years excluding 0
+years <- sort(unique(ILV_all$time[ILV_all$time != 0]))
+
+# Create a mapping: year → index
+year_map <- setNames(seq_along(years), years)
+
+# Replace years with mapped values, keep 0 as 0
+ILV_all$time <- ifelse(ILV_all$time == 0, 0, year_map[as.character(ILV_all$time)])
+
+# Add end time
+ILV_all$t_end <- max(na.omit(ILV_all$time))
 
 # Edit the other needed columns
 ILV_all$id <- ILV_all$Alias
@@ -539,6 +580,7 @@ ILV_all$trial <- 1
 
 # Get rid of other columns
 event_data <- ILV_all[, c("trial", "id", "time", "t_end")]
+write.csv(event_data, "event_data.csv")
 
 ILV_all$Sex <- ifelse(ILV_all$Sex == "Female", 1, 0)
 ILV_all$BirthYear <- as.numeric(ILV_all$BirthYear)
@@ -551,18 +593,21 @@ ILV_c <- data.frame(id = ILV_all$Alias,
 ILV_tv <- data.frame(
   trial = 1,
   id = rep(ILV_all$Alias, each = 20),
-  time = rep(1:20, times = length(ILV_all$Alias)),       
-  year = rep(1995:2014, times = length(ILV_all$Alias)),  
+  time = rep(1995:2014, times = length(ILV_all$Alias)),  
   age = rep(1995:2014, times = length(ILV_all$Alias)) - 
     rep(ILV_all$BirthYear, each = 20)
 )
+
+# Change age to age groups
+ILV_tv$age_group <- ifelse(ILV_tv$age >= 10, "adult", 
+                           ifelse(ILV_tv$age > 4, "juvenile", "calf"))
+ILV_tv <- ILV_tv[, -4]
 
 # Separate HI Behaviors to create weighted HI prop variable
 #' BG = Beg: F, G, H
 #' SD = Scavenge and Depredation: A, B, C, D, E
 #' FG = Fixed Gear Interaction: P
 # Change the code using ifelse statements
-filtered_data <- subset(filtered_data, Year %in% 1995:2014)
 filtered_data <- subset(filtered_data, Code %in% unique(edge_list$focal))
 
 filtered_data_list <- split(filtered_data, filtered_data$Year)
@@ -624,7 +669,17 @@ IDbehav_HI <- get_IDHI(c("BG", "FG", "SD"), IDbehav, rawHI_diff)
 Prop_HI <- function(IDbehav) {
   lapply(seq_along(IDbehav), function(i) {
     df <- IDbehav[[i]]
-    df$HIprop <- as.numeric(df$Behav) / as.numeric(df$Sightings)
+    
+    # Combine list of data frames into one big data frame with a year column
+    combined_df <- do.call(rbind, lapply(seq_along(rawHI_diff), function(i) {
+      df <- rawHI_diff[[i]]      
+      df$year <- i               
+      df                         
+    }))
+    
+    year_count <- aggregate(Freq ~ Code, data = combined_df[combined_df$Freq > 0, ], FUN = length)
+    
+    df$HIprop <- as.numeric(df$Behav) / (year_count$Freq * as.numeric(df$Sightings))
     df$HIprop[is.na(df$HIprop)] <- 0
     # Keep only 'Code' and 'HIprop' columns
     df <- df[, c('Code', 'HIprop')]
@@ -641,9 +696,10 @@ HI_matrix <- do.call(rbind, lapply(seq_along(prob_HI), function(t) {
   HIProp <- dat$HIprop
   
   data.frame(
+    trial = 1,
     id = ids,
-    HIProp = HIProp,
-    time = t
+    time = t,
+    t_weight = HIProp
   )
 }))
 
@@ -667,25 +723,54 @@ edge_list_vert <- do.call(rbind, lapply(seq_along(SRI_vert_all), function(t) {
 
 edge_list <- merge(edge_list, edge_list_vert, all = T)
 
-# Add transmission weights
-ILV_tv$weight <- HI_matrix$HIProp
+# Add ecol network to edge_list
+edge_list_ecol <- do.call(rbind, lapply(seq_along(ecol_all), function(t) {
+  mat <- ecol_all[[t]]
+  ids <- colnames(mat)  # or rownames(mat), assuming square
+  upper_idx <- which(upper.tri(mat, diag = TRUE), arr.ind = TRUE)
+  
+  data.frame(
+    focal = ids[upper_idx[, 1]],
+    other = ids[upper_idx[, 2]],
+    trial = 1,
+    assoc = mat[upper_idx],
+    time = t
+  )
+}))
+
+edge_list <- merge(edge_list, edge_list_ecol, all = T)
+
+# Add relate network to edge_list
+edge_list_relat <- do.call(rbind, lapply(seq_along(relate_all), function(t) {
+  mat <- relate_all[[t]]
+  ids <- colnames(mat)  # or rownames(mat), assuming square
+  upper_idx <- which(upper.tri(mat, diag = TRUE), arr.ind = TRUE)
+  
+  data.frame(
+    focal = ids[upper_idx[, 1]],
+    other = ids[upper_idx[, 2]],
+    trial = 1,
+    assoc = mat[upper_idx],
+    time = t
+  )
+}))
+
+edge_list <- merge(edge_list, edge_list_relat, all = T)
+
+# For test
+edge_list_test <- subset(edge_list, focal %in% event_data$id)
+edge_list_test <- subset(edge_list_test, other %in% event_data$id)
+HI_matrix_test <- subset(HI_matrix, id %in% event_data$id)
 
 # Input data
 data_list <- import_user_STb(
   event_data = event_data,
-  networks = edge_list,
+  networks = edge_list_test,
   ILV_c = ILV_c,
   ILV_tv = ILV_tv,
-  ILVi = c("age", "weight"),
-  ILVs = c("sex")
-)
-
-# For test
-edge_list_test <- edge_list$assoc
-
-data_list <- import_user_STb(
-  event_data = event_data,
-  networks = edge_list_test
+  ILVi = c("age_group", "sex"),
+  ILVs = c("age_group", "sex"),
+  t_weights = HI_matrix_test
 )
 
 saveRDS(data_list, "data_list.RData")
@@ -697,7 +782,10 @@ saveRDS(data_list, "data_list.RData")
 data_list <- readRDS("data_list.RData")
 
 # Generate the model
-model_full <- generate_STb_model(data_list, gq = T, est_acqTime = T)
+model_full <- generate_STb_model(data_list, 
+                                 data_type = "discrete_time",
+                                 gq = T, 
+                                 est_acqTime = T)
 
 # Fit the model
 full_fit <- fit_STb(data_list,
@@ -710,6 +798,7 @@ full_fit <- fit_STb(data_list,
 )
 
 STb_save(full_fit, output_dir = "cmdstan_saves", name="my_first_fit")
+readRDS('cmdstan_saves/my_first_fit.rds')
 
 # View output
 STb_summary(full_fit, digits = 3)
@@ -812,4 +901,3 @@ ggplot(acqdata, aes(x = observed_time, y = median_time)) +
   labs(x = "Observed time", y = "Estimated time") +
   theme_minimal()
 
-# 
