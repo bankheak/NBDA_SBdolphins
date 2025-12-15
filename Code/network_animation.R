@@ -8,26 +8,52 @@ setwd("../Data")
 
 # Read in data
 nxn <- readRDS("nxn.RData")
-ILV_all <- read.csv("ILV_dem.csv", header=TRUE, sep=",")
+ILV_all <- read.csv("Individuals_Residency.csv", header=TRUE, sep=",")
+filtered_data <- read.csv("filtered_data.csv")
+
+# Choose a HC Behavior
+HC <- "SD"
+
+# Get rid of data without individuals
+ids_to_keep <- with(filtered_data, tapply(DiffHI == HC, Code, function(x) any(x, na.rm = TRUE)))
+ids_to_keep <- names(ids_to_keep)[ids_to_keep]
+
+# Subset the data to keep only those individuals
+HI_ids <- subset(filtered_data, Code %in% ids_to_keep)
+
+# Only include individuals with IDs in HI_data
+ILV_all <- subset(ILV_all, Alias %in% HI_ids$Code)
 
 # Subset data
 for (i in seq_along(nxn)) {
-  # Get the row/column names from the nxn matrix
-  target_names <- ILV_all$Alias
+  target_names <- as.character(ILV_all$Alias)
   
-  # Subset the SRI matrix to match those names
-  nxn[[i]] <- nxn[[i]][target_names, target_names, drop = FALSE]
+  rn <- rownames(nxn[[i]])
+  cn <- colnames(nxn[[i]])
+  
+  keep_r <- target_names[target_names %in% rn]
+  keep_c <- target_names[target_names %in% cn]
+  
+  nxn[[i]] <- nxn[[i]][keep_r, keep_c, drop = FALSE]
 }
 
-# Fake subset
-nxn <- nxn[3:22]
-# Get the intersection of row names across all matrices
-common_names <- Reduce(intersect, lapply(nxn, rownames))
+# Get all unique IDs across all matrices
+total_ids <- unique(unlist(lapply(nxn, rownames)))
 
-# Subset each matrix to include only those common names
-for (i in seq_along(nxn)) {
-  nxn[[i]] <- nxn[[i]][common_names, common_names, drop = FALSE]
-}
+# Update each matrix to include all IDs, filling missing rows/columns with zeros
+nxn <- lapply(nxn, function(mat) {
+  # Current IDs in this matrix
+  current_ids <- rownames(mat)
+  
+  # Create a full zero matrix with all IDs
+  full_mat <- matrix(0, nrow = length(total_ids), ncol = length(total_ids),
+                     dimnames = list(total_ids, total_ids))
+  
+  # Fill in existing values
+  full_mat[current_ids, current_ids] <- mat
+  
+  return(full_mat)
+})
 
 # Edgelist: Nodes (i & j) and edge (or link) weight
 source("../code/functions.R")
@@ -43,7 +69,7 @@ net_list <- lapply(nxn, function (df) {
 # Create a dynamic network object
 
 # Years for each matrix
-years <- 1995:2014
+years <- 1:40
 
 # Create dynamic network with real years
 dyn_net <- networkDynamic(
@@ -53,7 +79,7 @@ dyn_net <- networkDynamic(
   termini = years + 1  # each network lasts 1 year
 )
 
-saveRDS(dyn_net, "dyn_net.RData")
+saveRDS(dyn_net, "dyn_net_sd.RData")
 
 # Get all edge IDs in the dynamic network
 all_edge_ids <- seq_len(network.edgecount(dyn_net))
@@ -78,18 +104,17 @@ for (i in seq_along(net_list)) {
 
 # Assume filtered_data has columns: Alias, Year, Conf_HI
 # Get all unique node names
-filtered_data <- read.csv("filtered_data.csv")
-all_nodes <- unique(filtered_data$Code)
+vn <- network.vertex.names(dyn_net)
 
 # Add dynamic color attribute
 for (i in seq_along(years)) {
   year <- years[i]
   
-  # Nodes with Conf_HI == 1 for this year
-  hi_nodes <- filtered_data$Code[filtered_data$Year == year & filtered_data$Confirmed_HI == 1]
+  # Nodes with Conf_HI == HC for this year
+  hi_nodes <- unique(filtered_data$Code[filtered_data$sixmon == year & filtered_data$DiffHI == HC])
   
   # Assign colors: red if in hi_nodes, gray otherwise
-  colors <- ifelse(all_nodes %in% hi_nodes, "red", "gray")
+  colors <- ifelse(vn %in% hi_nodes, "red", "gray")
   
   # Activate color attribute for this year
   activate.vertex.attribute(
