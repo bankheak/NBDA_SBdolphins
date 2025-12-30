@@ -92,7 +92,7 @@ mom_data <- read.csv("mom_data.csv")
 calves_data <- read.csv("calves_data.csv")
 
 # Create home range function
-create_hro_data <- function(df) {
+create_hr_data <- function(df) {
     
     # Get rid of na data
     df <- df[!is.na(df$StartLat) & !is.na(df$StartLon), ]
@@ -114,24 +114,89 @@ create_hro_data <- function(df) {
     # Use the calculated extent in kernelUD
     kernel <- kernelUD(coords_sp_utm, h = 1000)
     
-    # Calculate Dyadic HRO Matrix: HRO = (Rij/Ri) * (Rij/Rj)
-    kov <- kerneloverlaphr(kernel, method = "HR", lev = 95)
-    
-  return(kov)
+  return(kernel)
 }
 
 # Calculate home range for each individual before independence
-kov_mom_calf <- create_hro_data(mom_calf_data)
+hr_mom_calf <- create_hr_data(mom_calf_data)
 
 # Calculate home range for each mom after independence
-kov_mom <- create_hro_data(mom_data)
+hr_mom <- create_hr_data(mom_data)
 
 # Calculate home range for each individual after independence
-kov_calf <- create_hro_data(calves_data)
+hr_calf <- create_hr_data(calves_data)
 
 # Save HRO data
-saveRDS(kov_mom_calf, "kov_mom_calf.RDS")
-saveRDS(kov_mom, "kov_mom.RDS")
-saveRDS(kov_calf, "kov_calf.RDS")
+saveRDS(hr_mom_calf, "hr_mom_calf.RDS")
+saveRDS(hr_mom, "hr_mom.RDS")
+saveRDS(hr_calf, "hr_calf.RDS")
 
-#### PART 2: Home Range ####
+#### PART 3: Human-centric data ####
+
+# Read in Data
+mom_calf_data <- read.csv("mom_calf_data.csv")
+mom_data <- read.csv("mom_data.csv")
+calves_data <- read.csv("calves_data.csv")
+
+# Calculate frequency of calf hc before departure
+hc_behavs <- table(mom_calf_data$Code, mom_calf_data$DiffHI)
+
+hc_mom_calf_freq <- data.frame(Code = row.names(hc_behavs),
+                             Freq_bg = hc_behavs[,"BG"]/rowSums(hc_behavs),
+                             Freq_fg = hc_behavs[,"FG"]/rowSums(hc_behavs),
+                             Freq_sd = hc_behavs[,"SD"]/rowSums(hc_behavs))
+
+# Calculate frequency of mom hc after departure
+hc_behavs <- table(mom_data$Code, mom_data$DiffHI)
+
+hc_mom_freq <- data.frame(Code = row.names(hc_behavs),
+                               Freq_fg = hc_behavs[,"FG"]/rowSums(hc_behavs),
+                               Freq_sd = hc_behavs[,"SD"]/rowSums(hc_behavs))
+
+# Calculate frequency of calf hc after departure
+hc_behavs <- table(calves_data$Code, calves_data$DiffHI)
+
+hc_calf_freq <- data.frame(Code = row.names(hc_behavs),
+                               Freq_bg = hc_behavs[,"BG"]/rowSums(hc_behavs),
+                               Freq_fg = hc_behavs[,"FG"]/rowSums(hc_behavs),
+                               Freq_sd = hc_behavs[,"SD"]/rowSums(hc_behavs))
+
+
+#### PART 4: Run Correlation Tests ####
+
+# Read in Data
+hr_mom_calf <- readRDS("hr_mom_calf.RDS")
+hr_mom <- readRDS("hr_mom.RDS")
+hr_calf <- readRDS("hr_calf.RDS")
+
+# Name overlaps
+ids_mom <- names(hr_mom_calf)
+ids_calf <- names(hr_calf)
+shared_ids <- intersect(ids_mom, ids_calf)
+
+# Tag names so pairs are unambiguous
+names(hr_mom_calf) <- paste0(names(hr_mom_calf), "_mom")
+names(hr_calf)     <- paste0(names(hr_calf), "_calf")
+
+ud_all <- hr_mom_calf             # class(estUDm)
+for (n in names(hr_calf)) {
+  ud_all[[n]] <- hr_calf[[n]]     # add each UD; class remains 'estUDm'
+}
+
+# Compute overlap matrices
+ovl_HR   <- kerneloverlaphr(ud_all, method = "HR")
+
+# Extract overlap for the same individual across periods
+shared_ids <- intersect(
+  sub("_mom$", "", names(hr_mom_calf)),
+  sub("_calf$", "", names(hr_calf))
+)
+
+pair_val <- function(M, id) M[paste0(id, "_mom"), paste0(id, "_calf")]
+
+results_overlap <- data.frame(
+  id   = shared_ids,
+  HR   = sapply(shared_ids, pair_val, M = ovl_HR),
+  row.names = NULL
+)
+
