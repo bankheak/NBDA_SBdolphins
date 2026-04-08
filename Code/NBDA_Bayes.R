@@ -81,27 +81,49 @@ filtered_data$sixmon <- ceiling(as.numeric(filtered_data$MonthIndex) / split)
 write.csv(filtered_data, "filtered_data.csv")
 
 
-
-
 #### PART 2: Inspect data on human-centric behavior ####
 
 # Read in data
 filtered_data <- read.csv("filtered_data.csv")
 
+# If it has BG, FG, or SD then don't assign None
+cleaned <- filtered_data %>%
+  group_by(Code, sixmon) %>%
+  mutate(has_real_cat = any(DiffHI %in% c("BG", "FG", "SD"))) %>%
+  ungroup() %>%
+  filter(!(has_real_cat & DiffHI == "None")) %>%  # drop None only where a real category exists
+  select(-has_real_cat)
+
 # Categorize DiffHI to IDs
-HI_diff <- as.data.frame(table(filtered_data$Code, filtered_data$DiffHI, filtered_data$sixmon))
+HI_diff <- as.data.frame(table(cleaned$Code, cleaned$DiffHI, cleaned$sixmon))
 colnames(HI_diff) <- c("Code", "DiffHI", "sixmon", "Freq")
 
-# Plot the different HC by year
+# Add dates
+seq_dates <- seq(from = as.Date("1995-01-01"),
+                 to   = as.Date("2014-12-01"),
+                 by   = "6 month")
 
 # Filter to HCs only
 HI_diff$ID_count <- ifelse(HI_diff$Freq > 0, 1, 0)
 bg <- HI_diff %>% filter(DiffHI == "BG")
 bg <- aggregate(ID_count ~ sixmon, data = bg, sum)
+bg$HC <- "BG"
 fg <- HI_diff %>% filter(DiffHI == "FG")
 fg <- aggregate(ID_count ~ sixmon, data = fg, sum)
+fg$HC <- "FG"
 sd <- HI_diff %>% filter(DiffHI == "SD")
 sd <- aggregate(ID_count ~ sixmon, data = sd, sum)
+sd$HC <- "SD"
+None <- HI_diff %>% filter(DiffHI == "None")
+None <- aggregate(ID_count ~ sixmon, data = None, sum)
+None$HC <- "None"
+
+# Now combine
+dfs <- list(bg, fg, sd, None)
+time_series_data <- Reduce(function(x, y) merge(x, y, all = TRUE), dfs)
+time_series_data$Date <- seq_dates[time_series_data$sixmon]
+
+# Plot the different HC by year
 
 # BG
 ggplot(bg, aes(x = factor(sixmon), y = ID_count, group = 1)) +
@@ -148,6 +170,16 @@ ggplot(sd, aes(x = factor(sixmon), y = ID_count, group = 1)) +
   )
 # Could do 6 months and start 1995
 
+# Exclude None
+time_series_data <- time_series_data[time_series_data$HC != 'None',]
+  
+# Make a line plot of naive dolphins and begging, depredating and fixed-gear 
+ggplot(time_series_data, aes(x = Date, y = ID_count, color = HC)) +
+  geom_line() +
+  xlab("Date") +
+  ylab("No. of Individuals") +
+  labs(color = "HC Category") +
+  theme_minimal()
 
 
 #### PART 3: Create Networks ####
@@ -207,7 +239,7 @@ keep_rows <- unlist(keep_rows)
 # Subset the data
 group_data <- group_data[keep_rows, ]
 
-# Now create a list for each year
+# Now create a list for each time period
 group_data_list <- split(group_data, group_data$sixmon)
 
 # Calculate Gambit of the group
@@ -251,7 +283,7 @@ saveRDS(nxn_sd, "nxn_sd.RData")
 filtered_data <- read.csv("filtered_data.csv") 
 
 # Read in Horizontal data
-nxn <- readRDS("nxn.RData")
+nxn <- readRDS("nxn_sd.RData")
 
 # Find the demographics of the population
 ILV_all <- read.csv("Individuals_Residency.csv", header=TRUE, sep=",")
@@ -543,7 +575,7 @@ for (i in seq_along(cv_null)) {
 #### PART 5: Create acquisition data for model input ####
 
 # Read in all network data
-nxn <- readRDS("nxn_fg.RData")
+nxn <- readRDS("nxn_sd.RData")
 SRI_vert_all <- readRDS("SRI_vert_all.RData")
 ecol_all <- as.array(readRDS("ecol_all.RData"))
 
@@ -632,7 +664,7 @@ edge_list <- do.call(rbind, lapply(seq_along(nxn_full), function(t) {
 }))
 
 # Read in full data
-ILV_all <- read.csv("ILV_fg_subset.csv")
+ILV_all <- read.csv("ILV_sd_subset.csv")
 
 # Subset event data to include only edge_list ids
 ILV_all <- subset(ILV_all, Alias %in% unique(edge_list$focal))
@@ -643,7 +675,7 @@ filtered_data <- read.csv("filtered_data.csv")
 
 # Create acquisition data
 # Step 1: Filter filtered_data for confirmed HI behavior after first date
-HC <- "FG"
+HC <- "SD"
 first_month <- min(filtered_data$sixmon[filtered_data$DiffHI == HC])
 
 hi_data <- filtered_data[filtered_data$DiffHI == HC & filtered_data$sixmon != first_month, ]
@@ -732,7 +764,7 @@ get_IDHI <- function(HI, IDbehav_data, rawHI_diff_data) {
     return(df)
 }
 
-IDbehav_HI <- get_IDHI("BG", IDbehav, rawHI_diff)
+IDbehav_HI <- get_IDHI("SD", IDbehav, rawHI_diff)
 
 # Proportion of Sightings spent in HI
 Prop_HI <- function(df, raw_data, HI) {
@@ -759,7 +791,7 @@ Prop_HI <- function(df, raw_data, HI) {
     return(prop_df)
 }
 
-prob_HI <- Prop_HI(IDbehav_HI, filtered_data, "BG")
+prob_HI <- Prop_HI(IDbehav_HI, filtered_data, "SD")
 
 # Convert list of HI prop vectors into a matrix
 ids <- prob_HI$Code
@@ -838,14 +870,14 @@ data_list <- import_user_STb(
   t_weights = HI_matrix_test
 )
 
-saveRDS(data_list, "data_list_fg.RData")
+saveRDS(data_list, "data_list_sd.RData")
 
 
 
 #### PART 6: Run the model and summary outputs ####
 
 # Input data_list
-data_list <- readRDS("data_list_bg.RData")
+data_list <- readRDS("data_list_sd.RData")
 
 # Generate the model
 model_full <- generate_STb_model(data_list, 
