@@ -25,22 +25,17 @@ if(!require(kinship2)){install.packages('kinship2'); library(kinship2)} # geneti
 if(!require(doParallel)){install.packages('doParallel'); library(doParallel)} # for faster computing
 
 # Set relative path working directory
-setwd("../Data") # set working directory
+setwd("../Data") 
+# set working directory
 
 #### PART 1: Wrangling data ####
-
-# Read ILVs
-ILV_all <- read.csv("ILV_dem.csv", header=TRUE, sep=",")
-ILV_all <- ILV_all[, c("Alias", "HI_Indiv", "Mom", "Sex", "BirthYear")]
 
 # Subset original data
 data_1 <- read.csv("93_04_data.csv")
 data_2 <- read.csv("05_14_data.csv")
 orig_data <- merge(data_1, data_2, all = T)
-write.csv(orig_data, "orig_data.csv")
 
-# Read orig_data
-orig_data <- read.csv("orig_data.csv")
+# Clean data
 orig_data$Confirmed_HI <- ifelse(orig_data$ConfHI != "0", 1, 0)
 orig_data$Date <- as.Date(as.character(orig_data$Date), format="%d-%b-%y")
 
@@ -50,13 +45,20 @@ orig_data$Code <- ifelse(orig_data$Code == "1312", "F222", orig_data$Code)
 # Add year
 orig_data$Year <- as.numeric(format(orig_data$Date, format = "%Y"))
 
+# Save transformed data
+write.csv(orig_data, "orig_data.csv")
+
+# Read orig_data
+orig_data <- read.csv("orig_data.csv")
+
 # Filter data to include individuals that were seen at least 10 times 
 tab <- table(orig_data$Code)
 codes_in_all <- rownames(tab > 10)
 filtered_data <- orig_data[orig_data$Code %in% codes_in_all, ]
 
 # If needed subset
-filtered_data <- subset(filtered_data, Year %in% 1995:2014)
+start_year <- 2004
+filtered_data <- subset(filtered_data, Year %in% start_year:2014)
 
 # Add a month rank column
 filtered_data$Date <- as.Date(as.character(filtered_data$Date), format="%Y-%m-%d")
@@ -70,9 +72,8 @@ filtered_data$MonthIndex <- match(ym, unique(ym))
 #' SD = Scavenge and Depredation: A, B, C, D, E
 #' FG = Fixed Gear Interaction: P
 # Change the code using ifelse statements
-filtered_data$DiffHI <- ifelse(filtered_data$ConfHI %in% c("F", "G", "H"), "BG",
-                               ifelse(filtered_data$ConfHI %in% c("A", "B", "C", "D", "E"), "SD",
-                                      ifelse(filtered_data$ConfHI %in% c("P"), "FG", "None")))
+filtered_data$DiffHI <- ifelse(filtered_data$ConfHI %in% c("F", "G", "H", "A", "B", "C", "D", "E"), "SD",
+                                      ifelse(filtered_data$ConfHI %in% c("P"), "FG", "None"))
 
 # Make a column for 6 months instead
 split <- 6
@@ -86,10 +87,31 @@ write.csv(filtered_data, "filtered_data.csv")
 # Read in data
 filtered_data <- read.csv("filtered_data.csv")
 
-# If it has BG, FG, or SD then don't assign None
+# See which individuals overlap
+presence_df <- do.call(
+  rbind,
+  lapply(
+    split(filtered_data$DiffHI, filtered_data$Code),
+    function(x) c(
+      FG = "FG" %in% x,
+      SD = "SD" %in% x
+    )
+  )
+)
+
+presence_df <- as.data.frame(presence_df)
+presence_df$Code <- rownames(presence_df)
+rownames(presence_df) <- NULL
+
+# Get the number of times either are both true
+sum(presence_df$SD == T & presence_df$FG == F) 
+# Combine BG and SD but not FG
+
+
+# If it has FG or SD then don't assign None
 cleaned <- filtered_data %>%
   group_by(Code, sixmon) %>%
-  mutate(has_real_cat = any(DiffHI %in% c("BG", "FG", "SD"))) %>%
+  mutate(has_real_cat = any(DiffHI %in% c("FG", "SD"))) %>%
   ungroup() %>%
   filter(!(has_real_cat & DiffHI == "None")) %>%  # drop None only where a real category exists
   select(-has_real_cat)
@@ -99,15 +121,12 @@ HI_diff <- as.data.frame(table(cleaned$Code, cleaned$DiffHI, cleaned$sixmon))
 colnames(HI_diff) <- c("Code", "DiffHI", "sixmon", "Freq")
 
 # Add dates
-seq_dates <- seq(from = as.Date("1995-01-01"),
+seq_dates <- seq(from = as.Date("2004-01-01"),
                  to   = as.Date("2014-12-01"),
                  by   = "6 month")
 
 # Filter to HCs only
 HI_diff$ID_count <- ifelse(HI_diff$Freq > 0, 1, 0)
-bg <- HI_diff %>% filter(DiffHI == "BG")
-bg <- aggregate(ID_count ~ sixmon, data = bg, sum)
-bg$HC <- "BG"
 fg <- HI_diff %>% filter(DiffHI == "FG")
 fg <- aggregate(ID_count ~ sixmon, data = fg, sum)
 fg$HC <- "FG"
@@ -119,26 +138,11 @@ None <- aggregate(ID_count ~ sixmon, data = None, sum)
 None$HC <- "None"
 
 # Now combine
-dfs <- list(bg, fg, sd, None)
+dfs <- list(fg, sd, None)
 time_series_data <- Reduce(function(x, y) merge(x, y, all = TRUE), dfs)
 time_series_data$Date <- seq_dates[time_series_data$sixmon]
 
 # Plot the different HC by year
-
-# BG
-ggplot(bg, aes(x = factor(sixmon), y = ID_count, group = 1)) +
-  geom_line(color = "#4C78A8", linewidth = 1) +
-  geom_point(size = 3, color = "#4C78A8") +
-  labs(
-    x = "sixmon",
-    y = "ID_count"
-  ) +
-  theme_minimal(base_size = 12) +
-  theme(
-    panel.grid.minor = element_blank(),
-    axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)
-  )
-# Could do 3 months and start 1993
 
 # FG
 ggplot(fg, aes(x = factor(sixmon), y = ID_count, group = 1)) +
@@ -189,11 +193,12 @@ ggplot(time_series_data, aes(x = Date, y = ID_count, color = HC)) +
 filtered_data <- read.csv("filtered_data.csv")
 
 # Add individual data
+# Read ILVs
 ILV_all <- read.csv("Individuals_Residency.csv", header=TRUE, sep=",")
 ILV_all <- ILV_all[, c("Alias", "HI_Indiv", "Mom", "Sex", "BirthYear")]
 
 # Group each individual by date and sighting
-group_data <- filtered_data[,c("Date","Sighting","Code","Year", "sixmon", "DiffHI")]
+group_data <- filtered_data[,c("Date","Sighting","Code","Year","sixmon","DiffHI")]
 group_data$Group <- cumsum(!duplicated(group_data[1:2])) # Create sequential group # by date
 group_data <- group_data[,c(1, 3:7)] # Subset ID and group #
 
@@ -360,15 +365,17 @@ for (i in seq_along(filtered_list)) {
 saveRDS(ecol_all, "ecol_all.RData")
 
 # Relatedness network -----------------------------------------
+
+# Read in data
 ILV_pat <- read.csv("Paternity_data.csv") 
+ILV_all <- read.csv("Individuals_Residency.csv", header=TRUE, sep=",")
 
-# Order data
-order_rows <- rownames(nxn)
-order_cols <- colnames(nxn)
-
-# Reorder rows in 'ILV' based on 'order_rows'
-ILV <- ILV_pat[ILV_pat$Alias %in% order_rows, ]
-ILV <- ILV[match(order_rows, ILV$Alias), ]
+# Merge to fill in empty data
+ILV <- merge(
+  ILV_pat,
+  ILV_all,
+  all.y = TRUE
+)
 
 # Subset paternity data
 pedigree_df <- data.frame(Alias = ILV$Alias,
@@ -380,14 +387,6 @@ pedigree_df <- data.frame(Alias = ILV$Alias,
 pedigree_df$Dad <- ifelse(pedigree_df$Dad == "na", NA, pedigree_df$Dad)
 pedigree_df$Dad <- ifelse(pedigree_df$Dad == "FB26 or FB66", "FB26", pedigree_df$Dad)
 pedigree_df$Dad <- ifelse(pedigree_df$Dad == "FB76 or FB38", "FB76", pedigree_df$Dad)
-
-# Fix sex so that probable is assigned
-pedigree_df$Sex <- ifelse(ILV$Sex == "Probable Female", "Female",
-                          ifelse(ILV$Sex == "Probable Male", "Male", ILV$Sex))
-
-# Make sex numeric
-pedigree_df$Sex <- ifelse(pedigree_df$Sex == "Female", 2, 
-                          ifelse(pedigree_df$Sex == "Male", 1, NA))
 
 # Fix sex so that probable is assigned
 pedigree_df$Sex <- ifelse(ILV$Sex == "Probable Female", "Female",
@@ -417,7 +416,7 @@ for (i in 1:nrow(pedigree_df)) {
                             pedigree_df$ID[i], pedigree_df$Dad)
 }
 
-# Only take the ids that aren't found in the 117 list
+# Only take the ids that aren't found in the list
 missing_moms<- subset(pedigree_df, nchar(Mom) > 3)
 missing_dads<- subset(pedigree_df, nchar(Dad) > 3)
 
@@ -504,8 +503,8 @@ saveRDS(kinship_matrix, "kinship_matrix.RData")
 #### PART 4: Check variation in associations ####
 
 # Read in network
-nxn <- readRDS("nxn.RData")
-gbi <- readRDS("gbi.RData")
+nxn <- readRDS("nxn_sd.RData")
+gbi <- readRDS("gbi_sd.RData")
 
 # Done in the HPC 
 
@@ -605,13 +604,26 @@ for (i in seq_along(nxn)) {
   nxn[[i]] <- nxn[[i]][keep_r, keep_c, drop = FALSE]
 }
 
+# Get rid of IDs without data in ecol data from nxn
+for (i in seq_along(ecol_all)) {
+  target_names <- rownames(nxn[[i]])
+  
+  rn <- rownames(ecol_all[[i]])
+  cn <- colnames(ecol_all[[i]])
+  
+  keep_r <- target_names[target_names %in% rn]
+  keep_c <- target_names[target_names %in% cn]
+  
+  ecol_all[[i]] <- ecol_all[[i]][keep_r, keep_c, drop = FALSE]
+}
+
 # Add zeros to rows that don't have all individuals
 
 # Get all unique IDs across all matrices
 total_ids <- unique(unlist(lapply(nxn, rownames)))
 
 # Update each matrix to include all IDs, filling missing rows/columns with zeros
-nxn_1 <- lapply(nxn, function(mat) {
+nxn_full <- lapply(nxn, function(mat) {
   # Current IDs in this matrix
   current_ids <- rownames(mat)
   
@@ -624,17 +636,33 @@ nxn_1 <- lapply(nxn, function(mat) {
   
   return(full_mat)
 })
+
+
+# Do the same for the vert matrix
+# Current IDs in this matrix
+current_ids <- rownames(SRI_vert_all)
+
+# Keep only IDs that appear in total_ids
+common_ids <- intersect(total_ids, current_ids)
+
+# Create full zero matrix (395 x 395)
+full_mat <- matrix(
+  0,
+  nrow = length(total_ids),
+  ncol = length(total_ids),
+  dimnames = list(total_ids, total_ids)
+)
+
+# Insert existing values (aligned by name)
+full_mat[common_ids, common_ids] <- SRI_vert_all[common_ids, common_ids]
 
 # Turn vertical matrix into list
-months <- 40
-SRI_vert_all <- replicate(months, SRI_vert_all, simplify = FALSE)
+months <- 22
+SRI_vert_all <- replicate(months, full_mat, simplify = FALSE)
 SRI_vert_all <- as.array(SRI_vert_all)
 
-# Get all unique IDs across all matrices
-total_ids <- unique(unlist(lapply(nxn_1, rownames)))
-
-# Update each matrix to include all IDs, filling missing rows/columns with zeros
-nxn_full <- lapply(nxn_1, function(mat) {
+# Also do this for the ecol matrix
+ecol_all <- lapply(ecol_all, function(mat) {
   # Current IDs in this matrix
   current_ids <- rownames(mat)
   
@@ -647,6 +675,7 @@ nxn_full <- lapply(nxn_1, function(mat) {
   
   return(full_mat)
 })
+
 
 # Put matrices into data frame
 edge_list <- do.call(rbind, lapply(seq_along(nxn_full), function(t) {
@@ -716,29 +745,45 @@ ILV_all$trial <- 1
 
 # Get rid of other columns
 event_data <- ILV_all[, c("trial", "id", "time", "t_end")]
-write.csv(event_data, "event_data_bg.csv")
+write.csv(event_data, "event_data_sd.csv")
 
+# Get rid of unused individuals
+edge_list <- subset(edge_list, focal %in% event_data$id)
+edge_list <- subset(edge_list, other %in% event_data$id)
+
+saveRDS(edge_list, "edge_list.RData")
+
+# individual level variables
 ILV_all$Sex <- ifelse(ILV_all$Sex == "Female", 1, 0)
 ILV_all$Sex <- ifelse(is.na(ILV_all$Sex), 1, 0) # Fix NAs
 
 ILV_all$BirthYear <- as.numeric(ILV_all$BirthYear)
 ILV_all$BirthYear <- ifelse(is.na(ILV_all$BirthYear), 1985, ILV_all$BirthYear)
 
+# Add HAB
+ILV_all$HAB <- ifelse(ILV_all$time > 5, 0, 1)
+
 # Constant ILVs
 ILV_c <- data.frame(id = ILV_all$Alias,
                       sex = ILV_all$Sex)
+
 # Time varying ILVs
 ILV_tv <- data.frame(
   trial = 1,
-  id = rep(ILV_all$Alias, each = 20),
-  time = rep(1995:2014, times = length(ILV_all$Alias)),  
-  age = rep(1995:2014, times = length(ILV_all$Alias)) - 
-    rep(ILV_all$BirthYear, each = 20)
+  id = rep(ILV_all$Alias, each = 22),
+  time = rep(1:22, times = length(ILV_all$Alias)),  
+  age = rep(rep(2004:2014, each = 2), times = length(ILV_all$Alias)) - 
+    rep(ILV_all$BirthYear, each = 22),
+  HAB = rep(ILV_all$HAB, each = 22)
 )
+
+# Shorten it by 1
+ILV_tv <- subset(ILV_tv, time !=22)
 
 # Change age to age groups
 ILV_tv$age_group <- ifelse(ILV_tv$age >= 10, "adult", 
-                           ifelse(ILV_tv$age > 4, "juvenile", "calf"))
+                           ifelse(ILV_tv$age > 4, "juvenile",
+                                  ifelse(ILV_tv$age > 0, "calf", "unborn")))
 ILV_tv <- ILV_tv[, -4]
 
 # Categorize DiffHI to IDs
@@ -802,6 +847,13 @@ HI_matrix <- data.frame(
   id = ids,
   t_weight = HIProp)
 
+# Get rid of unused individuals
+HI_matrix <- subset(HI_matrix, id %in% event_data$id)
+
+
+# Read in edge list
+edge_list <- readRDS("edge_list.RData")
+
 # Add vertical network to edge_list
 edge_list_vert <- do.call(rbind, lapply(seq_along(SRI_vert_all), function(t) {
   mat <- SRI_vert_all[[t]]
@@ -812,12 +864,12 @@ edge_list_vert <- do.call(rbind, lapply(seq_along(SRI_vert_all), function(t) {
     focal = ids[upper_idx[, 1]],
     other = ids[upper_idx[, 2]],
     trial = 1,
-    assoc = mat[upper_idx],
+    vert = mat[upper_idx],
     time = t
   )
 }))
 
-edge_list <- merge(edge_list, edge_list_vert, all = T)
+edge_list$vert <- edge_list_vert$vert
 
 # Add ecol network to edge_list
 edge_list_ecol <- do.call(rbind, lapply(seq_along(ecol_all), function(t) {
@@ -829,77 +881,85 @@ edge_list_ecol <- do.call(rbind, lapply(seq_along(ecol_all), function(t) {
     focal = ids[upper_idx[, 1]],
     other = ids[upper_idx[, 2]],
     trial = 1,
-    assoc = mat[upper_idx],
+    ecol = mat[upper_idx],
     time = t
   )
 }))
 
-edge_list <- merge(edge_list, edge_list_ecol, all = T)
+edge_list$ecol <- edge_list_ecol$ecol
 
-# Add relate network to edge_list
-edge_list_relat <- do.call(rbind, lapply(seq_along(relate_all), function(t) {
-  mat <- relate_all[[t]]
-  ids <- colnames(mat)  # or rownames(mat), assuming square
-  upper_idx <- which(upper.tri(mat, diag = TRUE), arr.ind = TRUE)
-  
-  data.frame(
-    focal = ids[upper_idx[, 1]],
-    other = ids[upper_idx[, 2]],
-    trial = 1,
-    assoc = mat[upper_idx],
-    time = t
-  )
-}))
-
-edge_list <- merge(edge_list, edge_list_relat, all = T)
-
-# For test
-edge_list_test <- subset(edge_list, focal %in% event_data$id)
-edge_list_test <- subset(edge_list_test, other %in% event_data$id)
-edge_list_test <- subset(edge_list_test, time != 40)
-HI_matrix_test <- subset(HI_matrix, id %in% event_data$id)
+# Rearrange and get rid of the last time
+edge_list <- edge_list[, c("focal", "other", "trial", 
+                       "assoc", "vert", "ecol", "time")]
+edge_list <- subset(edge_list, time != 22)
 
 # Input data
 data_list <- import_user_STb(
   event_data = event_data,
-  networks = edge_list_test,
-  #ILV_c = ILV_c,
-  #ILV_tv = ILV_tv,
-  #ILVi = c("age_group", "sex"),
-  #ILVs = c("age_group", "sex"),
-  t_weights = HI_matrix_test
+  networks = edge_list,
+  ILV_c = ILV_c,
+  ILV_tv = ILV_tv,
+  ILVi = c("age_group", "sex", "HAB"),
+  ILVs = c("age_group", "sex", "HAB"),
+  t_weights = HI_matrix
 )
 
-saveRDS(data_list, "data_list_sd.RData")
+saveRDS(data_list, "data_list_2.RData")
 
 
 
 #### PART 6: Run the model and summary outputs ####
 
 # Input data_list
-data_list <- readRDS("data_list_sd.RData")
+data_list <- readRDS("data_list.RData")
+
+# Diagnoses notes
+#' Detected N_veff = 0, likihood provides no information
+#' Parameters that must be positive / bounded
+#' Weak or default priors
+#' Hierarchical or hazard-based structure
 
 # Generate the model
 model_full <- generate_STb_model(data_list, 
                                  data_type = "continuous_time",
-                                 gq = T, 
-                                 est_acqTime = T)
+                                 gq = F, 
+                                 est_acqTime = F)
 
-# Fit the model
-full_fit <- fit_STb(data_list,
-                    model_full,
-                    parallel_chains = 4,
-                    chains = 4,
-                    cores = 4,
-                    iter = 2000,
-                    refresh=1000
+# Test
+# Edit the priors in the model.STAN file
+# writeLines(model_full, "model_strong_priors.stan")
+parallel::detectCores()
+
+fit_test <- fit_STb(
+  data_list,
+  "model_strong_priors.stan",
+  chains = 1,
+  iter_warmup = 1000,
+  iter_sampling = 500,
+  adapt_delta = 0.99,
+  refresh = 50
 )
 
-STb_save(full_fit, output_dir = "cmdstan_saves", name="my_first_fit")
-readRDS('cmdstan_saves/my_first_fit.rds')
+# Fit the model
+fit <- fit_STb(
+  data_list,
+  "model_strong_priors.stan",
+  chains = 4,
+  parallel_chains = 4,
+  cores = 4,
+  iter_warmup = 2000,
+  iter_sampling = 2000,
+  adapt_delta = 0.99,
+  refresh = 100
+)
+
+fit$cmdstan_diagnose()
+
+STb_save(fit, output_dir = "cmdstan_saves", name="my_first_fit")
+fit <- readRDS('cmdstan_saves/my_first_fit.rds')
 
 # View output
-STb_summary(full_fit, digits = 3)
+STb_summary(fit, digits = 3)
 
 #' The most important output are the intrinsic rate (lambda_0), 
 #' and the relative strength of social transmission (s), whose 
@@ -916,6 +976,8 @@ STb_summary(full_fit, digits = 3)
 #' could calculate it yourself from the fit.
 
 # Posterior Predictive Checks
+event_data <- read.csv("event_data.csv")
+
 # Cumulative distribution curve
 plot_data_obs <- event_data %>%
   filter(time > 0, time <= t_end) %>% # exclude demonstrators (time == 0) and censored (time > t_end)
@@ -937,7 +999,7 @@ plot_data_obs <- bind_rows(
 ) %>%
   arrange(trial, time)
 
-draws_df <- as_draws_df(full_fit$draws(variables = "acquisition_time", inc_warmup = FALSE))
+draws_df <- as_draws_df(fit$draws(variables = "acquisition_time", inc_warmup = FALSE))
 
 # pivot longer
 ppc_long <- draws_df %>%
@@ -985,8 +1047,10 @@ ggplot() +
   labs(x = "Time", y = "Cumulative proportion informed", color = "Trial") +
   theme_minimal()
 
+#' The model reproduces the overall learning dynamics at the population level.
+
 # Estimated versus observed 
-acqdata = extract_acqTime(full_fit, data_list)
+acqdata = extract_acqTime(fit, data_list)
 
 ggplot(acqdata, aes(x = observed_time, y = median_time)) +
   geom_segment(
@@ -999,3 +1063,6 @@ ggplot(acqdata, aes(x = observed_time, y = median_time)) +
   labs(x = "Observed time", y = "Estimated time") +
   theme_minimal()
 
+#' This is exactly what you expect in a hazard‑based model:
+#' Early learners are well constrained
+#' Later learners accumulate uncertainty across time
