@@ -85,6 +85,49 @@ SRI.func <-  function (matr) {
   Dice
 }
 
+# memory efficient model
+SRI_cv <- function(matr) {
+  if (any(is.na(matr))) {
+    matr <- na.omit(matr)
+  }
+  
+  matr[matr > 1] <- 1
+  df <- as.matrix(t(matr))  # individuals × observations
+  
+  p <- nrow(df)
+  
+  sum_x <- 0
+  sum_x2 <- 0
+  n_pairs <- 0
+  
+  for (i in 1:(p - 1)) {
+    xi <- df[i, ]
+    
+    for (j in (i + 1):p) {
+      xj <- df[j, ]
+      
+      a <- sum(xi * xj)
+      b <- sum(xi * (1 - xj))
+      c <- sum((1 - xi) * xj)
+      
+      denom <- a + b + c
+      if (denom > 0) {
+        val <- a / denom
+        
+        sum_x  <- sum_x + val
+        sum_x2 <- sum_x2 + val^2
+        n_pairs <- n_pairs + 1
+      }
+    }
+  }
+  
+  mean_x <- sum_x / n_pairs
+  sd_x <- sqrt(sum_x2 / n_pairs - mean_x^2)
+  
+  (sd_x / mean_x) * 100
+}
+
+
 # Break apart the numerator and demoninator of SRI
 SRI_counts <- function(matr) {
   if (any(is.na(matr))) {

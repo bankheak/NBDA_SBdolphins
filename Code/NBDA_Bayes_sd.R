@@ -12,6 +12,7 @@
 #devtools::install_github("michaelchimento/STbayes")
 #cmdstanr::set_cmdstan_path(cmdstanr::install_cmdstan())
 ## Bayesian
+if(!require(stringr)){install.packages('stringr'); library(stringr)} # array
 if(!require(tidyr)){install.packages('tidyr'); library(tidyr)} 
 if(!require(abind)){install.packages('abind'); library(abind)} # array
 if(!require(STbayes)){install.packages('STbayes'); library(STbayes)} 
@@ -683,7 +684,7 @@ saveRDS(data_list, "data_list_sd.RData")
 
 
 
-#### PART 3: Run the model and summary outputs ####
+#### PART 3: Run the model ####
 
 # Input data_list
 data_list <- readRDS("data_list_sd.RData")
@@ -730,10 +731,14 @@ fit <- fit_STb(
 fit$cmdstan_diagnose()
 
 STb_save(fit, output_dir = "cmdstan_saves", name="my_first_fit")
-fit <- readRDS('cmdstan_saves/my_first_fit.rds')
+
+#### PART 4: Summary Outputs ####
+
+# Read in model output
+fit <- readRDS('cmdstan_saves_sd/my_first_fit.rds')
 
 # View output
-STb_summary(fit, digits = 3)
+results <- STb_summary(fit, digits = 3)
 
 #' The most important output are the intrinsic rate (lambda_0), 
 #' and the relative strength of social transmission (s), whose 
@@ -840,3 +845,121 @@ ggplot(acqdata, aes(x = observed_time, y = median_time)) +
 #' This is exactly what you expect in a hazard‑based model:
 #' Early learners are well constrained
 #' Later learners accumulate uncertainty across time
+
+# Make a clear summary of results
+results_clean <- results %>%
+  mutate(
+    # Classify parameter type
+    type = case_when(
+      str_detect(Parameter, "^beta_ILVi") ~ "Individual",
+      str_detect(Parameter, "^beta_ILVs") ~ "Social",
+      str_detect(Parameter, "^s\\[") ~ "Network strength",
+      str_detect(Parameter, "^percent_ST") ~ "Social contribution",
+      str_detect(Parameter, "lambda") ~ "Baseline",
+      TRUE ~ "Other"
+    ),
+    
+    # Extract variable names
+    variable = case_when(
+      str_detect(Parameter, "sex") ~ "Sex",
+      str_detect(Parameter, "HAB") ~ "HAB",
+      str_detect(Parameter, "age_group") ~ "Age",
+      str_detect(Parameter, "^s\\[") ~ "Network",
+      str_detect(Parameter, "^percent_ST") ~ "Network",
+      TRUE ~ Parameter
+    ),
+    
+    # Extract level (for age groups or networks)
+    level = str_extract(Parameter, "\\d+") %>% as.numeric(),
+    
+    # Clean labels for plotting
+    label = case_when(
+      str_detect(Parameter, "beta_ILVi") ~ paste0("Ind_", variable, "_", level %||% ""),
+      str_detect(Parameter, "beta_ILVs") ~ paste0("Soc_", variable, "_", level %||% ""),
+      str_detect(Parameter, "^s\\[") ~ paste0("s_net", level),
+      str_detect(Parameter, "^percent_ST") ~ paste0("ST_net", level),
+      TRUE ~ Parameter
+    )
+  )
+
+results_clean <- results_clean %>%
+  mutate(label = case_when(
+    str_detect(Parameter, "beta_ILVi_sex") ~ "Ind: Sex",
+    str_detect(Parameter, "beta_ILVs_sex") ~ "Soc: Sex",
+    str_detect(Parameter, "beta_ILVi_age_group") ~ paste0("Ind: Age ", level),
+    str_detect(Parameter, "beta_ILVs_age_group") ~ paste0("Soc: Age ", level),
+    TRUE ~ label
+  ))
+
+# Only network variables
+Neffects_only <- results_clean %>%
+  filter(variable %in% c("Network"))
+
+# Only ILV variables
+ILVeffects_only <- results_clean %>%
+  filter(type %in% c("Individual", "Social"))
+
+
+# Visual Plot of results
+## Networks
+ggplot(Neffects_only, aes(x = label, y = Median)) +
+  geom_col(fill = "#4C78A8", width = 0.7) +
+  
+  geom_errorbar(
+    aes(ymin = CI_Lower, ymax = CI_Upper),
+    width = 0.15,
+    size = 0.6
+  ) +
+  
+  geom_hline(yintercept = 0, linetype = "dashed", color = "black") +
+  
+  theme_classic(base_size = 14) +   # removes gridlines
+  
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+    axis.text.y = element_text(size = 12),
+    axis.title = element_text(size = 14),
+    plot.title = element_text(size = 16, face = "bold"),
+    
+    # Clean look
+    axis.line = element_line(color = "black"),
+    axis.ticks = element_line(color = "black")
+  ) +
+  
+  labs(
+    x = NULL,
+    y = "Effect size",
+    title = "Effects of Individual and Social Variables"
+  )
+
+## ILV
+ggplot(ILVeffects_only, aes(x = label, y = Median)) +
+  geom_col(fill = "#4C78A8", width = 0.7) +
+  
+  geom_errorbar(
+    aes(ymin = CI_Lower, ymax = CI_Upper),
+    width = 0.15,
+    size = 0.6
+  ) +
+  
+  geom_hline(yintercept = 0, linetype = "dashed", color = "black") +
+  
+  theme_classic(base_size = 14) +   # removes gridlines
+  
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+    axis.text.y = element_text(size = 12),
+    axis.title = element_text(size = 14),
+    plot.title = element_text(size = 16, face = "bold"),
+    
+    # Clean look
+    axis.line = element_line(color = "black"),
+    axis.ticks = element_line(color = "black")
+  ) +
+  
+  labs(
+    x = NULL,
+    y = "Effect size",
+    title = "Effects of Individual and Social Variables"
+  )
+

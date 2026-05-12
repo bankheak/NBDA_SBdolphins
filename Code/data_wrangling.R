@@ -5,14 +5,19 @@
 # load packages
 ## Clean up
 if(!require(tidyr)){install.packages('tidyr'); library(tidyr)} 
+if(!require(doParallel)){install.packages('doParallel'); library(doParallel)} # Faster computing
 if(!require(dplyr)){install.packages('dplyr'); library(dplyr)} 
 ## Mapping/Graphs
+if(!require(ggmap)){install.packages('ggmap'); library(ggmap)} # register API key version = '3.0.0'
 if(!require(ggplot2)){install.packages('ggplot2'); library(ggplot2)} 
 if(!require(raster)){install.packages('raster'); library(raster)} 
 if(!require(sf)){install.packages('sf'); library(sf)} # Convert degrees to meters
 if(!require(sp)){install.packages('sp'); library(sp)} # Convert degrees to meters
 if(!require(adehabitatHR)){install.packages('adehabitatHR'); library(adehabitatHR)} # Caluculate MCPs and Kernel density 
 if(!require(maps)){install.packages('maps'); library(maps)} # To map florida
+if(!require(ggOceanMaps)){install.packages('ggOceanMaps'); library(ggOceanMaps)} # To map florida
+if(!require(ggspatial)){install.packages('ggspatial'); library(ggspatial)} # To map florida
+if(!require(prettymapr)){install.packages('prettymapr'); library(prettymapr)} # To map florida
 
 # Set relative path working directory
 setwd("../Data") 
@@ -275,16 +280,15 @@ saveRDS(nF, "nF.RData")
 
 #' Calculate the association and CV for each of the 1000 permuted matrices to
 #' create null distribution
-cv_null <- rep(NA,reps)
+nF <- readRDS("nF.RData")
 
-foreach(i = 1:reps, 
-        .combine = c) %dopar% { 
-          sri_null = as.matrix(SRI.func(nF[[i]]))
-          cv_null[i] <- ( sd(sri_null) / mean(sri_null) ) * 100}
+cv_null <- foreach(i = 1:reps, .combine = c) %dopar% {
+  SRI_cv(nF[[i]])
+}
 
 stopImplicitCluster()
 
-saveRDS(cv_null, "cv_null.RData")
+saveRDS(cv_null, "cv_null_sd.RData")
 
 # Next take results from the HPC
 
@@ -344,6 +348,25 @@ forage_data <- subset(
   Code %in% unique(Code[DiffHI %in% c("SD", "FG")])
 )
 
+# See which individuals overlap
+presence_df <- do.call(
+  rbind,
+  lapply(
+    split(forage_data$DiffHI, forage_data$Code),
+    function(x) c(
+      FG = "FG" %in% x,
+      SD = "SD" %in% x
+    )
+  )
+)
+
+presence_df <- as.data.frame(presence_df)
+presence_df$Code <- rownames(presence_df)
+rownames(presence_df) <- NULL
+
+sum(presence_df$SD == F & presence_df$FG == T) 
+# 68 SD, 37 FG, 15 Both
+
 # Add HAB count
 forage_data$HAB_time <- ifelse(forage_data$Year > 2006, 2, 1)
 
@@ -396,13 +419,14 @@ for (i in seq_along(forage_list)) {
 
 # Save eco dat
 saveRDS(kernel_data, "kernel_data.RData")
+kernel_data <- readRDS("kernel_data.RData")
 
 # Plot map
 poly_list <- list()
 
 for (i in seq_along(kernel_data)) {
   
-  # get 25% polygons
+  # get 40% polygons
   ver95 <- try(getverticeshr(kernel_data[[i]], percent = 40))
   
   # skip if failed
@@ -421,12 +445,6 @@ for (i in seq_along(kernel_data)) {
 
 # combine all
 poly_data <- do.call(rbind, poly_list)
-
-# Upload florida map
-florida <- map_data("state")
-florida <- florida[florida$region == "florida", ]
-
-fl_sf <- st_as_sf(florida, coords = c("long", "lat"), crs = 4326)
 
 # Create a for loop to store each period's average coordinates
 # Extract 50% home range polygons
@@ -467,6 +485,13 @@ ids <- unique(forage_data$Code)
 
 # Build classification per individual
 HC_data <- aggregate(DiffHI ~ Code, forage_data, function(x) {
+  
+  # remove "None"
+  x <- x[x != "None"]
+  
+  # now classify
+  if (length(x) == 0) return(NA)   # no behavior at all
+  
   if (all(x == "SD")) return("SD")
   if (all(x == "FG")) return("FG")
   if (any(x == "SD") & any(x == "FG")) return("Both")
@@ -498,49 +523,45 @@ for (i in seq_along(centroid_list)) {
   centroid_list[[i]]$HC[is.na(centroid_list[[i]]$HC)] <- "Unknown"
 }
 
-# Plot data
+saveRDS(centroid_list, "centroid_list.RData")
+centroid_list <- readRDS("centroid_list.RData")
+
+# Upload florida map
+register_google(key = "AIzaSyCNUfReSv2TSoMrxLnDC0glT8kffvSpLGM")
+
 bbox <- st_bbox(poly_data)
 
+florida_map <- basemap(
+  limits = c(
+    bbox["xmin"] - 0.2,
+    bbox["xmax"] + 0.2,
+    bbox["ymin"] - 0.2,
+    bbox["ymax"] + 0.2
+  ),
+  bathymetry = F 
+) +
+  theme_void()
+
+
+# Plot data
 for (i in unique(poly_data$dataset)) {
   
   idx <- as.numeric(gsub("Dataset ", "", i))
   centroids_df <- centroid_list[[idx]]
   
-  p <- ggplot() +
+  p <- florida_map +
     
-    # Florida background
-    geom_polygon(
-      data = florida,
-      aes(x = long, y = lat, group = group),
-      fill = "gray90",
-      color = "black"
+    # ONLY centroids
+    geom_point(
+      data = centroids_df,
+      aes(x = Longitude, y = Latitude),
+      color = "black",
+      size = 3.5
     ) +
-    
-    # ✅ ONLY centroids now
     geom_point(
       data = centroids_df,
       aes(x = Longitude, y = Latitude, color = HC),
-      size = 3
-    ) +
-    
-    coord_sf(
-      xlim = c(bbox["xmin"] - 0.1, bbox["xmax"] + 0.1),
-      ylim = c(bbox["ymin"] - 0.1, bbox["ymax"] + 0.1),
-      expand = FALSE
-    ) +
-    
-    theme_void() +
-    
-    scale_color_manual(values = c(
-      "SD" = "steelblue4",
-      "FG" = "darkorange3",
-      "Both" = "purple4",
-      "Unknown" = "grey40"
-    )) +
-    
-    labs(
-      title = paste("Dolphin Centroids by Behavior -", i),
-      color = "Behavior"
+      size = 2.5
     )
   
   print(p)
