@@ -52,8 +52,8 @@ codes_in_all <- rownames(tab > 10)
 filtered_data <- orig_data[orig_data$Code %in% codes_in_all, ]
 
 # If needed subset
-start_year <- 2004
-filtered_data <- subset(filtered_data, Year %in% start_year:2014)
+#start_year <- 2004
+#filtered_data <- subset(filtered_data, Year %in% start_year:2014)
 
 # Add a month rank column
 filtered_data$Date <- as.Date(as.character(filtered_data$Date), format="%Y-%m-%d")
@@ -364,8 +364,8 @@ presence_df <- as.data.frame(presence_df)
 presence_df$Code <- rownames(presence_df)
 rownames(presence_df) <- NULL
 
-sum(presence_df$SD == F & presence_df$FG == T) 
-# 68 SD, 37 FG, 15 Both
+sum(presence_df$SD == T & presence_df$FG == F) 
+# 70 SD, 46 FG, 19 Both
 
 # Add HAB count
 forage_data$HAB_time <- ifelse(forage_data$Year > 2006, 2, 1)

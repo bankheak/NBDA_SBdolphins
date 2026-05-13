@@ -16,7 +16,6 @@ data {
     array[K] matrix[T_max, P] Zn;   // Knowledge state
     array[K,T_max] matrix[P, 3] ILV_age_group;
     vector[P] ILV_sex;
-    array[K, T_max] vector[P] ILV_HAB;
     int<lower=0> N_veff;
     array[K] int<lower=0> time_max; //Duration of obs period for each trial
     array[K, T_max] int<lower=0> D_int; // integer durations
@@ -26,29 +25,23 @@ parameters {
     vector[N_networks] log_s_prime_mean;
     vector[3] beta_ILVi_age_group;
     real beta_ILVi_sex;
-    real beta_ILVi_HAB;
     vector[3] beta_ILVs_age_group;
     real beta_ILVs_sex;
-    real beta_ILVs_HAB;
 }
 transformed parameters {
     vector<lower=0>[N_networks] s_prime;
     real<lower=0> lambda_0;
     array[K, T_max] vector[P] age_group_i;
     vector[P] sex_i;
-    array[K, T_max] vector[P] HAB_i;
     array[K, T_max] vector[P] age_group_s;
     vector[P] sex_s;
-    array[K, T_max] vector[P] HAB_s;
     s_prime = exp(log_s_prime_mean);
     lambda_0 = exp(log_lambda_0_mean);
     sex_i = ILV_sex * beta_ILVi_sex;
     sex_s = ILV_sex * beta_ILVs_sex;
     for (trial in 1:K) {
         for (timestep in 1:T_max) age_group_i[trial][timestep] = ILV_age_group[trial][timestep] * beta_ILVi_age_group;
-        for (timestep in 1:T_max) HAB_i[trial][timestep] = ILV_HAB[trial][timestep] * beta_ILVi_HAB;
         for (timestep in 1:T_max) age_group_s[trial][timestep] = ILV_age_group[trial][timestep] * beta_ILVs_age_group;
-        for (timestep in 1:T_max) HAB_s[trial][timestep] = ILV_HAB[trial][timestep] * beta_ILVs_HAB;
     }
 }
 model {
@@ -56,22 +49,20 @@ model {
     log_s_prime_mean ~ normal(-4, 0.5);
     beta_ILVi_age_group ~ normal(0,1);
     beta_ILVi_sex ~ normal(0,1);
-    beta_ILVi_HAB ~ normal(0,1);
     beta_ILVs_age_group ~ normal(0,1);
     beta_ILVs_sex ~ normal(0,1);
-    beta_ILVs_HAB ~ normal(0,1);
     for (trial in 1:K) {
         for (n in 1:N[trial]) {
             int id = ind_id[trial, n];
             int learn_time = t[trial, id];
             if (learn_time > 0) {
                 for (time_step in 1:learn_time) {
-                    real ind_term = exp(age_group_i[trial,time_step,id] + sex_i[id] + HAB_i[trial,time_step,id]);
+                    real ind_term = exp(age_group_i[trial,time_step,id] + sex_i[id]);
                     real net_effect = 0;
                     for (network in 1:N_networks) {
                         net_effect += s_prime[network] * dot_product(A[network, trial, time_step][id, ],Z[trial][time_step, ]);
                     }
-                    real soc_term = net_effect* exp(age_group_s[trial,time_step,id] + sex_s[id] + HAB_s[trial,time_step,id]);
+                    real soc_term = net_effect* exp(age_group_s[trial,time_step,id] + sex_s[id]);
                     real base_rate = lambda_0 * ind_term + soc_term;
                     real lambda = fmax(base_rate, 1e-6) * D[trial, time_step];
                     target += -lambda;
@@ -85,12 +76,12 @@ model {
             for (c in 1:N_c[trial]) {
                 int id = ind_id[trial, N[trial] + c];
                 for (time_step in 1:T[trial]) {
-                    real ind_term = exp(age_group_i[trial,time_step,id] + sex_i[id] + HAB_i[trial,time_step,id]);
+                    real ind_term = exp(age_group_i[trial,time_step,id] + sex_i[id]);
                     real net_effect = 0;
                     for (network in 1:N_networks) {
                         net_effect += s_prime[network] * dot_product(A[network, trial, time_step][id, ],Z[trial][time_step, ]);
                     }
-                    real soc_term = net_effect* exp(age_group_s[trial,time_step,id] + sex_s[id] + HAB_s[trial,time_step,id]);
+                    real soc_term = net_effect* exp(age_group_s[trial,time_step,id] + sex_s[id]);
                     real base_rate = lambda_0 * ind_term + soc_term;
                     real lambda = fmax(base_rate, 1e-6) * D[trial, time_step];
                     target += -lambda;
@@ -112,12 +103,12 @@ generated quantities {
             if (learn_time > 0){
                 real cum_hazard = 0; //set val before adding
                 for (time_step in 1:learn_time) {
-                    real ind_term = exp(age_group_i[trial,time_step,id] + sex_i[id] + HAB_i[trial,time_step,id]);
+                    real ind_term = exp(age_group_i[trial,time_step,id] + sex_i[id]);
                     real net_effect = 0;
                     for (network in 1:N_networks) {
                         net_effect += s_prime[network] * dot_product(A[network, trial, time_step][id, ],Z[trial][time_step, ]);
                     }
-                    real soc_term = net_effect* exp(age_group_s[trial,time_step,id] + sex_s[id] + HAB_s[trial,time_step,id]);
+                    real soc_term = net_effect* exp(age_group_s[trial,time_step,id] + sex_s[id]);
                     real base_rate = lambda_0 * ind_term + soc_term;
                     real lambda = fmax(base_rate, 1e-6) * D[trial, time_step];
                     cum_hazard += lambda; // accumulate hazard
@@ -126,7 +117,7 @@ generated quantities {
                         log_lik_matrix[trial, n] = log( (lambda_0 * ind_term + soc_term)) - cum_hazard;
                         for (network in 1:N_networks) {
                             real Tn = dot_product(A[network, trial, time_step][id, ], Z[trial][time_step, ]);
-                            psocn_sum[network] += (s_prime[network] * D[trial, time_step] * exp(age_group_s[trial,time_step,id] + sex_s[id] + HAB_s[trial,time_step,id])  * Tn) / lambda;
+                            psocn_sum[network] += (s_prime[network] * D[trial, time_step] * exp(age_group_s[trial,time_step,id] + sex_s[id])  * Tn) / lambda;
                         }
                         count_ST += 1;
                     }
@@ -141,12 +132,12 @@ generated quantities {
                 // compute cumulative hazard up to the censoring time
                 real cum_hazard = 0;
                 for (time_step in 1:censor_time) {
-                    real ind_term = exp(age_group_i[trial,time_step,id] + sex_i[id] + HAB_i[trial,time_step,id]);
+                    real ind_term = exp(age_group_i[trial,time_step,id] + sex_i[id]);
                     real net_effect = 0;
                     for (network in 1:N_networks) {
                         net_effect += s_prime[network] * dot_product(A[network, trial, time_step][id, ],Z[trial][time_step, ]);
                     }
-                    real soc_term = net_effect* exp(age_group_s[trial,time_step,id] + sex_s[id] + HAB_s[trial,time_step,id]);
+                    real soc_term = net_effect* exp(age_group_s[trial,time_step,id] + sex_s[id]);
                     real base_rate = lambda_0 * ind_term + soc_term;
                     real lambda = fmax(base_rate, 1e-6) * D[trial, time_step];
                     cum_hazard += lambda; // accumulate hazard
@@ -179,12 +170,12 @@ if (count_ST > 0) {
             acquisition_time[trial, n] = time_max[trial];
             for (time_step in 1:T[trial]) {
                 for (micro_time in 1:D_int[trial, time_step]){
-                    real ind_term = exp(age_group_i[trial,time_step,id] + sex_i[id] + HAB_i[trial,time_step,id]);
+                    real ind_term = exp(age_group_i[trial,time_step,id] + sex_i[id]);
                     real net_effect = 0;
                     for (network in 1:N_networks) {
                         net_effect += s_prime[network] * dot_product(A[network, trial, time_step][id, ],Z[trial][time_step, ]);
                     }
-                    real soc_term = net_effect* exp(age_group_s[trial,time_step,id] + sex_s[id] + HAB_s[trial,time_step,id]);
+                    real soc_term = net_effect* exp(age_group_s[trial,time_step,id] + sex_s[id]);
                     real base_rate = lambda_0 * ind_term + soc_term;
                     real lambda = fmax(base_rate, 1e-6);
                     cum_hazard += lambda;

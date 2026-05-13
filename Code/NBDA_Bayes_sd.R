@@ -428,7 +428,7 @@ full_mat <- matrix(
 full_mat[common_ids, common_ids] <- SRI_vert_all[common_ids, common_ids]
 
 # Turn vertical matrix into list
-months <- 22
+months <- 44
 SRI_vert_all <- replicate(months, full_mat, simplify = FALSE)
 SRI_vert_all <- as.array(SRI_vert_all)
 
@@ -522,14 +522,14 @@ ILV_all$BirthYear <- as.numeric(ILV_all$BirthYear)
 ILV_all$BirthYear <- ifelse(is.na(ILV_all$BirthYear), 1985, ILV_all$BirthYear)
 
 # Add HAB
-ILV_all$HAB <- ifelse(ILV_all$time > 5, 0, 1)
+ILV_all$HAB <- ifelse(ILV_all$time > 24, 1, 0)
 
 # Constant ILVs
 ILV_c <- data.frame(id = ILV_all$Alias,
                       sex = ILV_all$Sex)
 
 # Time varying ILVs
-res <- 22
+res <- 44
 ILV_tv <- data.frame(
   trial = 1,
   id = rep(ILV_all$Alias, each = res),
@@ -623,7 +623,7 @@ HI_matrix <- data.frame(
 HI_matrix <- HI_matrix[HI_matrix$id %in% event_data$id, ]
 
 # Read in edge list
-edge_list <- readRDS("edge_list.RData")
+edge_list <- readRDS("edge_list_sd.RData")
 
 # Add vertical network to edge_list
 edge_list_vert <- do.call(rbind, lapply(seq_along(SRI_vert_all), function(t) {
@@ -675,8 +675,8 @@ data_list <- import_user_STb(
   networks = edge_list,
   ILV_c = ILV_c,
   ILV_tv = ILV_tv,
-  ILVi = c("age_group", "sex", "HAB"),
-  ILVs = c("age_group", "sex", "HAB"),
+  ILVi = c("age_group", "sex"),
+  ILVs = c("age_group", "sex"),
   t_weights = HI_matrix
 )
 

@@ -45,8 +45,8 @@ transformed parameters {
     }
 }
 model {
-    log_lambda_0_mean ~ normal(-4, 0.5); # Baseline learning
-    log_s_prime_mean ~ normal(-4, 0.5); # Social parameter
+    log_lambda_0_mean ~ normal(-4, 0.5);
+    log_s_prime_mean ~ normal(-4, 0.5);
     beta_ILVi_age_group ~ normal(0,1);
     beta_ILVi_sex ~ normal(0,1);
     beta_ILVs_age_group ~ normal(0,1);
@@ -82,8 +82,8 @@ model {
                         net_effect += s_prime[network] * dot_product(A[network, trial, time_step][id, ],Z[trial][time_step, ]);
                     }
                     real soc_term = net_effect* exp(age_group_s[trial,time_step,id] + sex_s[id]);
-                    real base_rate = lambda_0 * ind_term + soc_term; # Take this code and replace it for every line
-                    real lambda = fmax(base_rate, 1e-6) * D[trial, time_step]; # Take this code
+                    real base_rate = lambda_0 * ind_term + soc_term;
+                    real lambda = fmax(base_rate, 1e-6) * D[trial, time_step];
                     target += -lambda;
                 }
             }

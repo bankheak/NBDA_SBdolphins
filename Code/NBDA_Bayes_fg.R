@@ -103,7 +103,7 @@ create_gbi <- function(list_years) {
   return(gbi)                                      
 }
 
-gbi_sd <- create_gbi(group_data_list)
+gbi_fg <- create_gbi(group_data_list)
 saveRDS(gbi_fg, "gbi_fg.RData")
 
 # Create association matrix
@@ -386,7 +386,6 @@ nxn_full <- lapply(nxn, function(mat) {
   return(full_mat)
 })
 
-
 # Do the same for the vert matrix
 # Current IDs in this matrix
 current_ids <- rownames(SRI_vert_all)
@@ -406,7 +405,7 @@ full_mat <- matrix(
 full_mat[common_ids, common_ids] <- SRI_vert_all[common_ids, common_ids]
 
 # Turn vertical matrix into list
-years <- 11
+years <- 22
 SRI_vert_all <- replicate(years, full_mat, simplify = FALSE)
 SRI_vert_all <- as.array(SRI_vert_all)
 
@@ -509,14 +508,14 @@ ILV_all$BirthYear <- as.numeric(ILV_all$BirthYear)
 ILV_all$BirthYear <- ifelse(is.na(ILV_all$BirthYear), 1985, ILV_all$BirthYear)
 
 # Add HAB
-ILV_all$HAB <- ifelse(ILV_all$time > 3, 0, 1)
+ILV_all$HAB <- ifelse(ILV_all$time > 12, 1, 0)
 
 # Constant ILVs
 ILV_c <- data.frame(id = ILV_all$Alias,
                     sex = ILV_all$Sex)
 
 # Time varying ILVs
-res <- 11
+res <- 22
 ILV_tv <- data.frame(
   trial = 1,
   id = rep(ILV_all$Alias, each = res),
@@ -657,8 +656,8 @@ data_list <- import_user_STb(
   networks = edge_list,
   ILV_c = ILV_c,
   ILV_tv = ILV_tv,
-  ILVi = c("age_group", "sex", "HAB"),
-  ILVs = c("age_group", "sex", "HAB"),
+  ILVi = c("age_group", "sex"),
+  ILVs = c("age_group", "sex"),
   t_weights = HI_matrix
 )
 
@@ -737,7 +736,7 @@ results <- STb_summary(fit, digits = 3)
 #' could calculate it yourself from the fit.
 
 # Posterior Predictive Checks
-event_data <- read.csv("event_data.csv")
+event_data <- read.csv("event_data_fg.csv")
 
 # Cumulative distribution curve
 plot_data_obs <- event_data %>%
@@ -781,6 +780,9 @@ ppc_long <- draws_df %>%
 # thin sample for plotting
 sample_idx <- sample(c(1:max(ppc_long$draw)), 100)
 ppc_long <- ppc_long %>% filter(draw %in% sample_idx)
+
+# Input data_list
+data_list <- readRDS("data_list_fg.RData")
 
 # build cumulative curves per draw
 plot_data_ppc <- ppc_long %>%
@@ -879,7 +881,7 @@ Neffects_only <- results_clean %>%
 
 # Only ILV variables
 ILVeffects_only <- results_clean %>%
-  filter(type %in% c("Individual", "Social"))
+  filter(variable %in% c("Age", "Sex"))
 
 
 # Visual Plot of results
