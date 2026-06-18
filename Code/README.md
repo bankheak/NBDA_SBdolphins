@@ -13,19 +13,45 @@ I start by cleaning up and combining data from 1995-2014. I then evaluating the 
 
 I create the horizontal, vertical and ecological networks for each inter-event period. 
 
+Within the horizontal model code I add a column for inter-event period that is calculated based if new individuals aquired the target behavior for each month. 
+The group-by-individual data frame is then split into a list based on each aquisition event and an association matrix is calculated for each element in the list.
+Observations of individuals after they aquired the target behavior were dropped from the observation data used to calculate association.
+
+Dyads in the vertical network were simply given a 1 if they were a mother-calf pair and a 0 if they were not.
+
+The ecological network was created using the kernel density home range overlap estimates of individuals. These were split by year in order to get a more robust reading
+of individuals' home ranges.
+
 ## PART 2: Create acquisition data for model input
 
-Here I create all aquisition data.
+Here I create all aquisition event data, edge lists, individual-level variables, and weight estimates to input as predictors and response variables for the NBDA model.
+I started by making sure that the networks were all the same dimensions based on the number of inter-event periods and included the same individuals. I then combined these
+networks into one edgelist data frame that included time and network estimates for each dyad. 
 
-## PART 3: Rund the models
+To create the event data I calculated each individual's aquisition time, 
+the overall end time based on the last aquisition event. Individuals that never aquired the target behavior were assigned the end time + 1.
 
-I run a multi-network-based diffusion analysis using a Markov chain Monte Carlo (MCMC) sampler under a Bayesian statistical framework. 
+I then created the constant individual-level variable (ILV_c) and varying individual-level variable (ILV_v) dataframes. These included sex as constant
+and age as varying.
 
-Process model:
-$SRI_{i,j,p} ~ (u_i+u_j)+β1_{Sex_{i,j}}+β2_{Age_{i,j}}+β3_{HRO_{i,j,p}}+β4_{HC_{i,j,p}}+β5_{During HAB_{i,j,p}}+β6_{After HAB_{i,j,p}}+β7_{HC_{i,j,p}}*During HAB+β8_{HC_{i,j,p}}*After HAB$
+Finally, the proportion of time each individual spent engaging in human-centric behavior was calculated and added as a static weight in the data list.
 
-Observation model:
-$SRI_{i,j,p} ~ Beta[μ_{SRI_{i,j,p}},ϕ_{SRI_{i,j,p}}]$
+## PART 3: Run the model
+
+I ran a multi-network-based diffusion analysis using a Markov chain Monte Carlo (MCMC) sampler under a Bayesian statistical framework. I used a test model to run the raw data and found that 
+the model detected N_veff = 0, which meant that the likihood provided no information, this lead me to change the baseline learning rate to be positive and bounded and change the priors.
+I did this by working in the STAN.model code which were saved for each behavior. This was then ran in fit_STb().
+
+
+NBDA model:
+
+$\lambda_i(t) \sim \lambda_0(t)(1-z_i(t))\left(e^{\Gamma_i(t)}\sum_n S_n\sum_{j=1}^{N}w_j(t)a_{n,ij}(t)z_j(t)+e^{\beta_i(t)}\right)$
+
+$\beta_i \sim \sum_{k=1}^{V} \beta_k x_{k,i}$
+
+$\Gamma_i \sim \sum_{k=1}^{V} \gamma_k x_{k,i}$
+
+where λi(t) is the rate at which individual i acquires the target behavior as a function of time, λo(t) is a baseline rate function, zi(t) is the ‘status’ of individual i at time t (1 = informed; 0 = naïve), N is the number of individuals in the population, w_j is the transmission weight of the rate at which each individual performed human-centric foraging behavior during difusion, n is the number of networks and aij indicates the connection strength from j to i from the social networks, xk,i is the value of the kth variable for individual i, βk is the coefficient of the effect of variable k (sex, age and HAB exposure) on asocial learning, and γk is the coefficient of the effect of variable k on social transmission. The key model output will be the relative strength of social transmission, s, the value of which is estimated when the model is fitted to the data.
 
 ## PART 4: Summary Outputs
 
