@@ -544,8 +544,7 @@ ILV_tv <- data.frame(
   id = rep(ILV_all$Alias, each = T_event),
   time = rep(1:T_event, times = length(ILV_all$Alias)),  
   age = (rep(event_periods$Year, times = length(ILV_all$Alias)) - 
-           rep(ILV_all$BirthYear, each = T_event)) - 1,
-  HAB = rep(ILV_all$HAB, each = T_event)
+           rep(ILV_all$BirthYear, each = T_event)) - 1
 )
 
 # Change age to age groups
