@@ -28,6 +28,6 @@ Human subsidies have rapidly reshaped the processes in which social animals make
 
 ## Table of Contents
 
-- [Data](https://github.com/bankheak/NBDA_SBdolphins/tree/main/data)
-- [Code](https://github.com/bankheak/NBDA_SBdolphins/tree/main/code)
-- [Figures](https://github.com/bankheak/NBDA_SBdolphins/tree/main/figs)
+- [Data](https://github.com/bankheak/NBDA_SBdolphins/tree/main/Data)
+- [Code](https://github.com/bankheak/NBDA_SBdolphins/tree/main/Code)
+- [Figures](https://github.com/bankheak/NBDA_SBdolphins/tree/main/Figures)
