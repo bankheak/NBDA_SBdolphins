@@ -1,6 +1,6 @@
 ## --- Bayesian Multi-network Diffusion Analysis --- ##
 
-#### Fixed Gear Foraging ####===
+####=== Fixed-gear Foraging ===####
 
 # load packages
 #if(!require(devtools)){install.packages('devtools'); library(devtools)} # To load NBDA
@@ -11,25 +11,13 @@
 # install devtools if not already
 #devtools::install_github("michaelchimento/STbayes")
 #cmdstanr::set_cmdstan_path(cmdstanr::install_cmdstan())
-## Bayesian
-if(!require(stringr)){install.packages('stringr'); library(stringr)} # array
-if(!require(tidyr)){install.packages('tidyr'); library(tidyr)} 
-if(!require(abind)){install.packages('abind'); library(abind)} # array
-if(!require(STbayes)){install.packages('STbayes'); library(STbayes)} 
-if(!require(ggplot2)){install.packages('ggplot2'); library(ggplot2)} 
-if(!require(dplyr)){install.packages('dplyr'); library(dplyr)} 
-if(!require(posterior)){install.packages('posterior'); library(posterior)} 
-## Creating networks
-if(!require(asnipe)){install.packages('asnipe'); library(asnipe)} # get_group_by_individual
-if(!require(sf)){install.packages('sf'); library(sf)} # Convert degrees to meters
-if(!require(sp)){install.packages('sp'); library(sp)} # Convert degrees to meters
-if(!require(adehabitatHR)){install.packages('adehabitatHR'); library(adehabitatHR)} # Caluculate MCPs and Kernel density 
-if(!require(kinship2)){install.packages('kinship2'); library(kinship2)} # genetic relatedness
-if(!require(doParallel)){install.packages('doParallel'); library(doParallel)} # for faster computing
+if(!require(pacman)){install.packages('pacman'); library(pacman)} # to load all packages
+pacman::p_load(stringr, tidyr, abind, STbayes, ggplot2,
+               dplyr, posterior, tidyverse, asnipe, sf,
+               sp, adehabitatHR, kinship2, doParallel)
 
 # Set relative path working directory
 setwd("../Data") 
-# set working directory
 
 #### PART 1: Create Networks ####
 # Horizontal network -----------------------------------------
@@ -42,29 +30,35 @@ filtered_data <- read.csv("filtered_data.csv")
 ILV_all <- read.csv("Individuals_Residency.csv", header=TRUE, sep=",")
 ILV_all <- ILV_all[, c("Alias", "HI_Indiv", "Mom", "Sex", "BirthYear")]
 
+# Get rid of ids that aren't in filtered_data
+filtered_data <- subset(filtered_data, Code %in% unique(ILV_all$Alias))
+
 # Group each individual by date and sighting
-group_data <- filtered_data[,c("Date","Sighting","Code","Year","sixmon","DiffHI")]
+group_data <- filtered_data[,c("Date", "Sighting", "Code", "Year", 
+                               "MonthIndex", "DiffHI")]
 group_data$Group <- cumsum(!duplicated(group_data[1:2])) # Create sequential group # by date
 group_data <- group_data[,c(1, 3:7)] # Subset ID and group #
 
+#' Begin creating the acquisition data
 # Find the first time globally where Confirmed_HI == HC
-HC <- "FG"
-first_year <- min(filtered_data$Year[filtered_data$DiffHI == HC])
+HC <- "FG" # name of target behavior
+first_month <- min(filtered_data$MonthIndex[filtered_data$DiffHI == HC])
 
-# Get individuals who had Confirmed_HI == HC in that first year
-first_year_individuals <- unique(filtered_data$Code[
-  filtered_data$DiffHI == HC & filtered_data$Year == first_year
+# Get individuals who had DiffHI == HC in that first month
+first_month_individuals <- unique(filtered_data$Code[
+  filtered_data$DiffHI == HC & filtered_data$MonthIndex == first_month
 ])
 
 # Assign yes/no based on that
-ILV_all$Demons_HI_forage <- ifelse(ILV_all$Alias %in% first_year_individuals, "yes", "no")
-write.csv(ILV_all, "ILV_FG_subset.csv")
+ILV_all$Demons_HI_forage <- ifelse(ILV_all$Alias %in% 
+                                     first_month_individuals, "yes", "no")
 
-# Subset the data to include observations only from before acquisition
-# 1. Identify Codes to exclude
+#' Subset the data to include observations only from before each 
+#' individual's acquisition event
+# 1. Exclude demonstrators
 exclude_codes <- ILV_all$Alias[ILV_all$Demons_HI_forage == 'yes']
 
-# 2. Compute first HI index for each Code
+# 2. Identify first observation of HC for each Code
 first_HI_index <- tapply(seq_len(nrow(group_data)), group_data$Code, function(idx) {
   hi_rows <- idx[group_data$Confirmed_HI[idx] == 1]
   if (length(hi_rows) > 0) hi_rows[1] else Inf
@@ -74,23 +68,56 @@ first_HI_index <- tapply(seq_len(nrow(group_data)), group_data$Code, function(id
 split_rows <- split(seq_len(nrow(group_data)), group_data$Code)
 
 # 4. For excluded Codes: keep all rows
-# For others: keep up to first HI, or all if no HI (cutoff = Inf)
+# For others: keep up to first HC, or all if no HC (cutoff = Inf)
 keep_rows <- mapply(function(idx, cutoff, code) {
   if (code %in% exclude_codes || is.infinite(cutoff)) {
-    idx  # keep everything for excluded Codes or codes with no HI
+    idx  # keep everything for excluded Codes or codes with no HC
   } else {
-    idx[idx <= cutoff]  # keep up to first HI for others
+    idx[idx <= cutoff]  # keep up to first HC for others
   }
 }, split_rows, first_HI_index[names(split_rows)], names(split_rows))
 
-# 5. Flatten and subset
+# 5. Unlist the rows and subset the group_data
 keep_rows <- unlist(keep_rows)
-
-# Subset the data
 group_data <- group_data[keep_rows, ]
 
-# Now create a list for each time period
-group_data_list <- split(group_data, group_data$Year)
+
+#' Create a column for event intervals
+# Ensure Date is Date type
+group_data <- group_data %>%
+  mutate(Date = as.Date(Date))
+
+# 1. Get unique months when HC occurs
+event_months <- group_data %>%
+  filter(DiffHI == HC) %>%
+  arrange(Date) %>%
+  group_by(Code) %>%
+  slice(1) %>%
+  ungroup() %>%
+  mutate(month_period = format(Date, "%Y-%m")) %>%
+  distinct(month_period) %>%
+  pull(month_period)
+
+event_months <- as.Date(paste0(event_months, "-01")) # add first to each month
+event_months <- event_months[!is.na(event_months)]  # remove bad values
+event_months <- sort(unique(event_months))         # enforce order
+
+# 2. Add event_period to group_data
+group_data <- group_data %>%
+  mutate(
+    month_date = as.Date(format(Date, "%Y-%m-01")),
+    event_period = findInterval(month_date, event_months)
+  )
+
+# 3. Get rid of time before event
+group_data <- subset(group_data, event_period > 0)
+
+# Save data
+write.csv(group_data, "group_data_sd.csv")
+write.csv(ILV_all, "ILV_FG_subset.csv")
+
+# Now create a list for each time period to calculate association for inter-events
+group_data_list <- split(group_data, group_data$event_period)
 
 # Calculate Gambit of the group
 create_gbi <- function(list_years) {
@@ -103,11 +130,11 @@ create_gbi <- function(list_years) {
   return(gbi)                                      
 }
 
-gbi_fg <- create_gbi(group_data_list)
-saveRDS(gbi_fg, "gbi_fg.RData")
+gbi_fg <- create_gbi(group_data_list) # Run the function
+saveRDS(gbi_fg, "gbi_fg.RData") # Save data
 
-# Create association matrix
-source("../Code/functions.R") # SRI.func
+# Calculate association matrix
+source("../Code/functions.R") # to extract SRI.func
 create_nxn <- function(gbi) {
   n.cores <- detectCores()
   system.time({
@@ -122,236 +149,38 @@ create_nxn <- function(gbi) {
   return(nxn)
 }
 
-nxn_fg <- create_nxn(gbi_fg)
-
-# Save nxn
-saveRDS(nxn_fg, "nxn_fg.RData")
-
-# Ecological network -----------------------------------------
-# Transform coordinate data into a Spatial Points Dataframe in km
-
-# Read in filtered data
-filtered_data <- read.csv("filtered_data.csv")
-
-# Read in vertical network
-SRI_vert_all <- readRDS("SRI_vert_all.RData")
-
-# Now create a list for each year
-filtered_list <- split(filtered_data, filtered_data$Year)
-
-# Create a list for Home Range
-ecol_all <- list()
-for (i in seq_along(filtered_list)) {
-  
-  # Remove NAs and invalid coordinates
-  clean_data <- filtered_list[[i]][
-    !is.na(filtered_list[[i]]$StartLon) &
-      !is.na(filtered_list[[i]]$StartLat) &
-      filtered_list[[i]]$StartLon >= -180 & filtered_list[[i]]$StartLon <= 180 &
-      filtered_list[[i]]$StartLat >= -90 & filtered_list[[i]]$StartLat <= 90,
-  ]
-  
-  # Keep only individuals with at least 5 observations
-  clean_data <- clean_data[clean_data$Code %in% names(which(table(clean_data$Code) >= 5)), ]
-  
-  ids <- clean_data$Code
-  coordinates <- clean_data[, c("StartLon", "StartLat")]
-  
-  # Create a SpatialPointsDataFrame with coordinates
-  coords_sp <- SpatialPointsDataFrame(coords = coordinates, data = data.frame(id = ids))
-  
-  # Set CRS to WGS84
-  proj4string(coords_sp) <- CRS("+proj=longlat +datum=WGS84")
-  
-  # Transform to a UTM CRS that uses km as the unit
-  dolph.sp <- spTransform(coords_sp, CRS("+proj=utm +zone=17 +datum=WGS84 +units=m +no_defs"))
-  
-  # Use the calculated extent in kernelUD
-  kernel <- kernelUD(dolph.sp, h = 1000)
-  
-  # Calculate Dyadic HRO Matrix: HRO = (Rij/Ri) * (Rij/Rj)
-  kov <- kerneloverlaphr(kernel, method = "HR", lev = 95)
-  
-  # Order data
-  #order_rows <- rownames(SRI_vert_all)
-  #order_cols <- colnames(SRI_vert_all)
-  
-  # Apply the order to each matrix in the list
-  #ecol_all[[i]] <- kov[order_rows, order_cols] 
-  ecol_all[[i]] <- kov
-}
-
-# Save eco dat
-saveRDS(ecol_all, "ecol_all_fg.RData")
-
-# Relatedness network -----------------------------------------
-
-# Read in data
-ILV_pat <- read.csv("Paternity_data.csv") 
-ILV_all <- read.csv("Individuals_Residency.csv", header=TRUE, sep=",")
-
-# Merge to fill in empty data
-ILV <- merge(
-  ILV_pat,
-  ILV_all,
-  all.y = TRUE
-)
-
-# Subset paternity data
-pedigree_df <- data.frame(Alias = ILV$Alias,
-                          Mom = ILV$Mom,
-                          Dad = ILV$Dad,
-                          Sex = ILV$Sex)
-
-# Fix dad data
-pedigree_df$Dad <- ifelse(pedigree_df$Dad == "na", NA, pedigree_df$Dad)
-pedigree_df$Dad <- ifelse(pedigree_df$Dad == "FB26 or FB66", "FB26", pedigree_df$Dad)
-pedigree_df$Dad <- ifelse(pedigree_df$Dad == "FB76 or FB38", "FB76", pedigree_df$Dad)
-
-# Fix sex so that probable is assigned
-pedigree_df$Sex <- ifelse(ILV$Sex == "Probable Female", "Female",
-                          ifelse(ILV$Sex == "Probable Male", "Male", ILV$Sex))
-
-# Make sex numeric
-pedigree_df$Sex <- ifelse(pedigree_df$Sex == "Female", 2, 
-                          ifelse(pedigree_df$Sex == "Male", 1, NA))
-
-# Limit data to non-missing paternity IDs
-pedigree_subset <- pedigree_df[!is.na(pedigree_df$Mom) | !is.na(pedigree_df$Dad), ]
-
-# Reset row names to be sequential
-row.names(pedigree_subset) <- NULL
-
-# Make id numeric
-## Moms
-pedigree_df$ID <- rownames(pedigree_df)
-for (i in 1:nrow(pedigree_df)) {
-  pedigree_df$Mom <- ifelse(pedigree_df$Mom %in% pedigree_df$Alias[i], 
-                            pedigree_df$ID[i], pedigree_df$Mom)
-}
-
-## Dads
-for (i in 1:nrow(pedigree_df)) {
-  pedigree_df$Dad <- ifelse(pedigree_df$Dad %in% pedigree_df$Alias[i], 
-                            pedigree_df$ID[i], pedigree_df$Dad)
-}
-
-# Only take the ids that aren't found in the list
-missing_moms<- subset(pedigree_df, nchar(Mom) > 3)
-missing_dads<- subset(pedigree_df, nchar(Dad) > 3)
-
-# Create the sequence of numbers starting from 118
-number_mom <- data.frame(Mom = unique(missing_moms$Mom), 
-                         ID = c((nrow(pedigree_df) + 1):(nrow(pedigree_df) + length(unique(missing_moms$Mom)))))
-
-# Fill in numbers
-for (i in 1:nrow(missing_moms)) {
-  missing_moms$Mom <- ifelse(missing_moms$Mom %in% number_mom$Mom[i], 
-                             number_mom$ID[i],
-                             missing_moms$Mom)
-}
-
-# Make ID numeric
-missing_moms$Mom <- as.numeric(missing_moms$Mom)
-
-# Do the same thing with dads
-number_dad <- data.frame(Dad = unique(missing_dads$Dad), 
-                         ID = c((max(missing_moms$Mom) + 1):(max(missing_moms$Mom) + length(unique(missing_dads$Dad)))))
-for (i in 1:nrow(missing_dads)) {
-  missing_dads$Dad <- ifelse(missing_dads$Dad %in% number_dad$Dad[i], 
-                             number_dad$ID[i],
-                             missing_dads$Dad)
-}
-
-# Make ID numeric
-missing_dads$Dad <- as.numeric(missing_dads$Dad)
-
-# Fill in the rest of the NAs with random numbers
-## Moms
-missing_moms_match <- subset(pedigree_df, nchar(Mom) > 3)
-matching_indices <- match(pedigree_df$Mom, missing_moms_match$Mom)
-pedigree_df$Mom <- ifelse(!is.na(matching_indices), missing_moms$Mom[matching_indices], pedigree_df$Mom)
-
-## Dads
-missing_dads_match<- subset(pedigree_df, nchar(Dad) > 3)
-matching_indices <- match(pedigree_df$Dad, missing_dads_match$Dad)
-pedigree_df$Dad <- ifelse(!is.na(matching_indices), missing_dads$Dad[matching_indices], pedigree_df$Dad)
-
-# Now create data for function
-pedigree_data <- data.frame(id = as.numeric(pedigree_df$ID),
-                            mom = as.numeric(pedigree_df$Mom),
-                            dad = as.numeric(pedigree_df$Dad),
-                            sex = pedigree_df$Sex)
-# Assuming your dataframe is named pedigree_data
-pedigree_data$dad[is.na(pedigree_data$dad)] <- 0  # Replace NA with 0 or another appropriate code
-pedigree_data$mom[is.na(pedigree_data$mom)] <- 0  # Replace NA with 0 or another appropriate code
-
-# Add Fake Fathers
-for (i in which(pedigree_data$mom > 0 & pedigree_data$dad == 0)) {
-  pedigree_data$dad[i] <- i + max(pedigree_data$dad)
-}
-
-# Create fake individuals
-fake_ids <- (nrow(pedigree_df) + 1):(max(pedigree_data$dad) + 1)
-fake <- data.frame(id = fake_ids,
-                   mom = rep(0, length(fake_ids)),
-                   dad = rep(0, length(fake_ids)),
-                   sex = rep(3, length(fake_ids)))
-pedigree_data <- rbind(pedigree_data, fake)
-
-# Change errors
-pedigree_data$sex[pedigree_data$id %in% c(139:270)] <- 1
-pedigree_data$sex[pedigree_data$id %in% c(118:138)] <- 2
-
-# For limited data
-pedigree_data$sex[pedigree_data$id %in% c(94:112, 117:nrow(pedigree_data))] <- 1
-pedigree_data$sex[pedigree_data$id %in% c(58:93)] <- 2
-
-# Create GR matrix
-ped <- pedigree(id = pedigree_data$id, 
-                dadid = pedigree_data$dad, 
-                momid = pedigree_data$mom,
-                sex = pedigree_data$sex)
-
-# Calculate kinship matrix
-kinship_matrix <- kinship(ped)
-relate_all <- kinship_matrix[1:117, 1:117]
-saveRDS(kinship_matrix, "kinship_matrix.RData")
-
-
+nxn_fg <- create_nxn(gbi_fg) # Run the function
+saveRDS(nxn_fg, "nxn_fg.RData") # Save data
 
 #### PART 2: Create acquisition data for model input ####
 
 # Read in all network data
 nxn <- readRDS("nxn_fg.RData")
 SRI_vert_all <- readRDS("SRI_vert_all.RData")
-ecol_all <- as.array(readRDS("ecol_all_fg.RData"))
+ecol_all <- as.array(readRDS("ecol_all.RData"))
 
-# Get rid of IDs without data in nxn from vert data
-for (i in seq_along(nxn)) {
-  target_names <- rownames(SRI_vert_all)
-  
-  rn <- rownames(nxn[[i]])
-  cn <- colnames(nxn[[i]])
-  
-  keep_r <- target_names[target_names %in% rn]
-  keep_c <- target_names[target_names %in% cn]
-  
-  nxn[[i]] <- nxn[[i]][keep_r, keep_c, drop = FALSE]
-}
+#' Duplicate ecol data for inter-event periods
+# Read in group data
+group_data <- read.csv("group_data_fg.csv")
 
-# Get rid of IDs without data in ecol data from nxn
-for (i in seq_along(nxn)) {
-  target_names <- rownames(ecol_all[[i]])
-  
-  rn <- rownames(nxn[[i]])
-  cn <- colnames(nxn[[i]])
-  
-  keep_r <- target_names[target_names %in% rn]
-  keep_c <- target_names[target_names %in% cn]
-  
-  nxn[[i]] <- nxn[[i]][keep_r, keep_c, drop = FALSE]
-}
+# Get unique event periods in order
+names(ecol_all) <- sort(unique(group_data$Year))
+
+# Group inter-event periods based on their year
+event_periods <- group_data %>%
+  arrange(event_period, Year) %>%
+  group_by(event_period) %>%
+  slice(1) %>%   # keeps first occurrence
+  ungroup()
+
+# Get the extend of events
+T_event <- length(unique(event_periods$event_period))
+
+# Expand ecol_all to match each event period
+ecol_all <- lapply(seq_len(nrow(event_periods)), function(i) {
+  yr <- event_periods$Year[i]
+  ecol_all[[as.character(yr)]]
+})
 
 # Get rid of IDs without data in nxn from ecol data
 for (i in seq_along(ecol_all)) {
@@ -366,10 +195,10 @@ for (i in seq_along(ecol_all)) {
   ecol_all[[i]] <- ecol_all[[i]][keep_r, keep_c, drop = FALSE]
 }
 
-# Add zeros to rows that don't have all individuals
-
+#' Add zeros to rows that don't have all individuals so that each network 
+#' has every individual
 # Get all unique IDs across all matrices
-total_ids <- unique(unlist(lapply(nxn, rownames)))
+total_ids <- unique(unlist(lapply(nxn, colnames)))
 
 # Update each matrix to include all IDs, filling missing rows/columns with zeros
 nxn_full <- lapply(nxn, function(mat) {
@@ -386,7 +215,8 @@ nxn_full <- lapply(nxn, function(mat) {
   return(full_mat)
 })
 
-# Do the same for the vert matrix
+
+#' Do the same for the vert matrix
 # Current IDs in this matrix
 current_ids <- rownames(SRI_vert_all)
 
@@ -405,11 +235,10 @@ full_mat <- matrix(
 full_mat[common_ids, common_ids] <- SRI_vert_all[common_ids, common_ids]
 
 # Turn vertical matrix into list
-years <- 22
-SRI_vert_all <- replicate(years, full_mat, simplify = FALSE)
+SRI_vert_all <- replicate(T_event, full_mat, simplify = FALSE)
 SRI_vert_all <- as.array(SRI_vert_all)
 
-# Also do this for the ecol matrix
+#' Also do this for the ecol matrix
 ecol_all <- lapply(ecol_all, function(mat) {
   # Current IDs in this matrix
   current_ids <- rownames(mat)
@@ -424,7 +253,8 @@ ecol_all <- lapply(ecol_all, function(mat) {
   return(full_mat)
 })
 
-# Put matrices into data frame
+
+#' Put all networks into data frame called edge_list
 edge_list <- do.call(rbind, lapply(seq_along(nxn_full), function(t) {
   mat <- nxn_full[[t]]
   ids <- colnames(mat)  # or rownames(mat), assuming square
@@ -439,34 +269,31 @@ edge_list <- do.call(rbind, lapply(seq_along(nxn_full), function(t) {
   )
 }))
 
-# Read in full data
+
+#' Add order of acquisition data
+# Read in demographic data
 ILV_all <- read.csv("ILV_FG_subset.csv")
 
 # Subset event data to include only edge_list ids
 ILV_all <- subset(ILV_all, Alias %in% unique(edge_list$focal))
 
-# Add order of acquisition data
-# Create demonstrator column
-filtered_data <- read.csv("filtered_data.csv")
-
 # Create acquisition data
-# Step 1: Filter filtered_data for confirmed HI behavior after first date
+# 1. Filter group_data for confirmed HC behavior after first aquisition date
 HC <- "FG"
-first_year <- min(filtered_data$Year[filtered_data$DiffHI == HC])
+first_month <- min(group_data$event_period[group_data$DiffHI == HC])
+hi_data <- group_data[group_data$DiffHI == HC & group_data$event_period != first_month, ]
 
-hi_data <- filtered_data[filtered_data$DiffHI == HC & filtered_data$Year != first_year, ]
+# 2. Get the first time each ID showed the behavior
+first_hi_mon <- aggregate(event_period ~ Code, data = hi_data, FUN = min)
 
-# Step 2: Get the first year each Alias showed the behavior
-first_hi_yr <- aggregate(Year ~ Code, data = hi_data, FUN = min)
+# 3. Create a new column for order of acquisition
+first_hi_mon$HI_Order_acquisition <- as.numeric(first_hi_mon$event_period)
 
-# Step 3: Create a new column for order of acquisition
-first_hi_yr$HI_Order_acquisition <- as.numeric(first_hi_yr$Year)
-
-# Step 4: Merge this info back into ILV_all
-ILV_all <- merge(ILV_all, first_hi_yr[, c("Code", "HI_Order_acquisition")],
+# 4. Merge this info back into ILV_all
+ILV_all <- merge(ILV_all, first_hi_mon[, c("Code", "HI_Order_acquisition")],
                  by.x = "Alias", by.y = "Code", all.x = TRUE)
 
-# Step 5: Replace NA with 0 for individuals who had the behavior in 1995
+# 5. Replace NA with 0 for individuals who had the behavior in the first month
 ILV_all$HI_Order_acquisition[ILV_all$Demons_HI_forage == "yes"] <- 0
 
 # Change individuals who didn't require behavior to t_end +1
@@ -474,90 +301,63 @@ ILV_all$time <- ifelse(is.na(ILV_all$HI_Order_acquisition),
                        max(na.omit(ILV_all$HI_Order_acquisition)) + 1, 
                        ILV_all$HI_Order_acquisition)
 
-# Get unique years excluding 0
-years <- sort(unique(ILV_all$time[ILV_all$time != 0]))
-
-# Create a mapping: year → index
-yr_map <- setNames(seq_along(years), years)
-
-# Replace years with mapped values, keep 0 as 0
-ILV_all$time <- ifelse(ILV_all$time == 0, 0, yr_map[as.character(ILV_all$time)])
-
 # Add end time
 ILV_all$t_end <- max(na.omit(ILV_all$time)) - 1
 
-# Edit the other needed columns
+# Add trial and id
 ILV_all$id <- ILV_all$Alias
 ILV_all$trial <- 1
 
-# Get rid of other columns
+# Get rid of unnecessary columns
 event_data <- ILV_all[, c("trial", "id", "time", "t_end")]
-write.csv(event_data, "event_data_fg.csv")
+write.csv(event_data, "event_data_fg.csv") # Save data
 
-# Get rid of unused individuals
+# Remove unused individuals
 edge_list <- subset(edge_list, focal %in% event_data$id)
 edge_list <- subset(edge_list, other %in% event_data$id)
+saveRDS(edge_list, "edge_list_fg.RData") # Save data
 
-saveRDS(edge_list, "edge_list_fg.RData")
-
-# individual level variables
+#' Create static and dynamic individual level variables
+# Make sex binary
 ILV_all$Sex <- ifelse(ILV_all$Sex == "Female", 1, 0)
 ILV_all$Sex <- ifelse(is.na(ILV_all$Sex), 1, 0) # Fix NAs
 
+# Fix age
 ILV_all$BirthYear <- as.numeric(ILV_all$BirthYear)
 ILV_all$BirthYear <- ifelse(is.na(ILV_all$BirthYear), 1985, ILV_all$BirthYear)
 
-# Add HAB
-ILV_all$HAB <- ifelse(ILV_all$time > 12, 1, 0)
-
-# Constant ILVs
+# Create constant ILV dataframe
 ILV_c <- data.frame(id = ILV_all$Alias,
                     sex = ILV_all$Sex)
 
-# Time varying ILVs
-res <- 22
+# Create time varying ILV dataframe
 ILV_tv <- data.frame(
   trial = 1,
-  id = rep(ILV_all$Alias, each = res),
-  time = rep(1:res, times = length(ILV_all$Alias)),  
-  age = (rep(2004:2014, times = length(ILV_all$Alias)) - 
-           rep(ILV_all$BirthYear, each = res)) - 1,
-  HAB = rep(ILV_all$HAB, each = res)
+  id = rep(ILV_all$Alias, each = T_event),
+  time = rep(1:T_event, times = length(ILV_all$Alias)),  
+  age = (rep(event_periods$Year, times = length(ILV_all$Alias)) - 
+           rep(ILV_all$BirthYear, each = T_event)) - 1,
+  HAB = rep(ILV_all$HAB, each = T_event)
 )
-
-# Shorten it by 1
-#ILV_tv <- subset(ILV_tv, time !=res)
 
 # Change age to age groups
 ILV_tv$age_group <- ifelse(ILV_tv$age >= 10, "adult", 
                            ifelse(ILV_tv$age > 4, "juvenile",
                                   ifelse(ILV_tv$age > 0, "calf", "unborn")))
-ILV_tv <- ILV_tv[, -4]
+ILV_tv <- ILV_tv[, -4] # Get rid of unnecessary row
 
-# Categorize DiffHI to IDs
-## Dynamic raw count data
-# rawHI_diff <- as.data.frame(table(filtered_data$Code, 
-#                                   filtered_data$DiffHI, 
-#                                   filtered_data$sixmon))
-# colnames(rawHI_diff) <- c("Code", "DiffHI", "Time", "Freq")
-
-## Static proportion data
-# Catergorize into raw data
-rawHI_diff <- as.data.frame(table(filtered_data$Code,
-                                  filtered_data$DiffHI))
+#' Create static weights based on the proportion of time each individual 
+#' engaged in the target behavior
+# Catergorize HC into count data
+rawHI_diff <- as.data.frame(table(group_data$Code,
+                                  group_data$DiffHI))
 colnames(rawHI_diff) <- c("Code", "DiffHI", "Freq")
 
 # Categorize ID to Sightings
-IDbehav <- as.data.frame(table(filtered_data$Code))
+IDbehav <- as.data.frame(table(group_data$Code))
 colnames(IDbehav) <- c("Code", "Sightings")
-# Order data
-order_rows <- rownames(nxn_full[[1]])
 
-# Now reorder the dataframe
-IDbehav <- IDbehav %>%
-  arrange(match(Code, order_rows))
-
-# Create a frequency count for each HI behavior
+# Create a frequency count for each HC behavior
 get_IDHI <- function(HI, IDbehav_data, rawHI_diff_data) {
   df <- IDbehav_data
   HI_freq <- rawHI_diff_data$Freq[rawHI_diff_data$DiffHI %in% HI]
@@ -565,9 +365,9 @@ get_IDHI <- function(HI, IDbehav_data, rawHI_diff_data) {
   colnames(df) <- c("Code", "Sightings", "Behav")
   return(df)
 }
+IDbehav_HI <- get_IDHI(HC, IDbehav, rawHI_diff) # Run function
 
-IDbehav_HI <- get_IDHI("FG", IDbehav, rawHI_diff)
-# Proportion of Sightings spent in HI
+# Proportion of Sightings spent in HC
 Prop_HI <- function(df, raw_data, HI) {
   
   year_count <- aggregate(Year ~ Code,
@@ -591,18 +391,16 @@ Prop_HI <- function(df, raw_data, HI) {
   prop_df <- df[, c('Code', 'HIprop')]
   return(prop_df)
 }
+prob_HI <- Prop_HI(IDbehav_HI, group_data, HC) # Run function
 
-prob_HI <- Prop_HI(IDbehav_HI, filtered_data, "FG")
-
-# Convert list of HI prop vectors into a matrix
+# Get ids and HC proportions
 ids <- unique(prob_HI$Code)
 HIProp <- prob_HI$HIprop
 
-# Create trans weights
+# Create dataframe for HC prop weights
 HI_matrix <- data.frame(
   trial = 1,
   id = ids,
-  #time = rawHI_diff$Time,
   t_weight = HIProp)
 
 # Get rid of unused individuals
@@ -645,10 +443,9 @@ edge_list_ecol <- do.call(rbind, lapply(seq_along(ecol_all), function(t) {
 
 edge_list$ecol <- edge_list_ecol$ecol
 
-# Rearrange and get rid of the last time
+# Rearrange
 edge_list <- edge_list[, c("focal", "other", "trial", 
                            "assoc", "vert", "ecol", "time")]
-edge_list <- subset(edge_list, time != res)
 
 # Input data
 data_list <- import_user_STb(
@@ -656,25 +453,18 @@ data_list <- import_user_STb(
   networks = edge_list,
   ILV_c = ILV_c,
   ILV_tv = ILV_tv,
-  ILVi = c("age_group", "sex"),
-  ILVs = c("age_group", "sex"),
+  ILVi = c("age_group", "sex", "HAB"),
+  ILVs = c("age_group", "sex", "HAB"),
   t_weights = HI_matrix
 )
 
-saveRDS(data_list, "data_list_fg.RData")
+saveRDS(data_list, "data_list_fg.RData") # Save data
 
 
-
-#### PART 3: Run the model and summary outputs ####
+#### PART 3: Run the model ####
 
 # Input data_list
 data_list <- readRDS("data_list_fg.RData")
-
-# Diagnoses notes
-#' Detected N_veff = 0, likihood provides no information
-#' Parameters that must be positive / bounded
-#' Weak or default priors
-#' Hierarchical or hazard-based structure
 
 # Generate the model
 model_full <- generate_STb_model(data_list, 
@@ -682,13 +472,52 @@ model_full <- generate_STb_model(data_list,
                                  gq = T, 
                                  est_acqTime = T)
 
-# Test
-# Edit the priors in the model.STAN file
+# Diagnoses notes
+#' Detected N_veff = 0, likihood provides no information
+#' Parameters that must be positive / bounded
+#' Weak or default priors
+#' Hierarchical or hazard-based structure
+#' Therefore we need to change priors and baseline learning rate must be positive
+
+# Do this in the model.STAN file
 # writeLines(model_full, "model_strong_priors_fg.stan")
+
+# Precompute E for faster computing
+# Extract needed pieces
+K <- data_list$K
+P <- data_list$P
+T_max <- data_list$T_max
+N_networks <- data_list$N_networks
+A <- data_list$A
+Z <- data_list$Z
+
+# Precompute E
+E <- array(0, dim = c(N_networks, K, T_max, P))
+
+for (network in 1:N_networks) {
+  for (trial in 1:K) {
+    for (t in 1:T_max) {
+      
+      A_mat <- A[network, trial, t, , ]
+      Z_vec <- Z[trial, t, ]
+      
+      E[network, trial, t, ] <- A_mat %*% Z_vec
+    }
+  }
+}
+
+# Add to data list
+data_list$E <- E
+
+# REMOVE A (important for memory + speed)
+data_list$A <- NULL
+
+
+# Test run
 
 # fit_test <- fit_STb(
 #   data_list,
-#   "model_strong_priors.stan",
+#   "model_strong_priors_fg.stan",
 #   chains = 1,
 #   iter_warmup = 1000,
 #   iter_sampling = 500,
@@ -711,7 +540,8 @@ fit <- fit_STb(
 
 fit$cmdstan_diagnose()
 
-STb_save(fit, output_dir = "cmdstan_saves", name="my_first_fit")
+STb_save(fit, output_dir = "cmdstan_saves_fg", name="my_first_fit") # Save model
+
 
 #### PART 4: Summary Outputs ####
 
@@ -735,7 +565,8 @@ results <- STb_summary(fit, digits = 3)
 #' itself usually isn’t reported and is excluded from the output, but you 
 #' could calculate it yourself from the fit.
 
-# Posterior Predictive Checks
+#' Posterior Predictive Checks
+# Read in event data
 event_data <- read.csv("event_data_fg.csv")
 
 # Cumulative distribution curve
@@ -781,9 +612,6 @@ ppc_long <- draws_df %>%
 sample_idx <- sample(c(1:max(ppc_long$draw)), 100)
 ppc_long <- ppc_long %>% filter(draw %in% sample_idx)
 
-# Input data_list
-data_list <- readRDS("data_list_fg.RData")
-
 # build cumulative curves per draw
 plot_data_ppc <- ppc_long %>%
   group_by(draw, trial, time) %>%
@@ -809,8 +637,7 @@ ggplot() +
   geom_line(data = plot_data_obs, aes(x = time, y = cum_prop), linewidth = 1) +
   labs(x = "Time", y = "Cumulative proportion informed", color = "Trial") +
   theme_minimal()
-
-#' The model reproduces the overall learning dynamics at the population level.
+# The model reproduces the overall learning dynamics at the population level.
 
 # Estimated versus observed 
 acqdata = extract_acqTime(fit, data_list)
@@ -825,12 +652,11 @@ ggplot(acqdata, aes(x = observed_time, y = median_time)) +
   geom_abline(intercept = 0, slope = 1, color = "black", linetype = "dashed") +
   labs(x = "Observed time", y = "Estimated time") +
   theme_minimal()
-
-#' This is exactly what you expect in a hazard‑based model:
+#' This is exactly what to expect in a hazard‑based model:
 #' Early learners are well constrained
 #' Later learners accumulate uncertainty across time
 
-# Make a clear summary of results
+# Make a clean summary of results
 results_clean <- results %>%
   mutate(
     # Classify parameter type
@@ -881,13 +707,13 @@ Neffects_only <- results_clean %>%
 
 # Only ILV variables
 ILVeffects_only <- results_clean %>%
-  filter(variable %in% c("Age", "Sex"))
+  filter(variable %in% c("Sex", "Age"))
 
 
-# Visual Plot of results
-## Networks
+#' Visual Plot of effect sizes
+# Networks
 ggplot(Neffects_only, aes(x = label, y = Median)) +
-  geom_col(fill = "#4C78A8", width = 0.7) +
+  geom_col(fill = "lightcoral", width = 0.7) +
   
   geom_errorbar(
     aes(ymin = CI_Lower, ymax = CI_Upper),
@@ -913,12 +739,12 @@ ggplot(Neffects_only, aes(x = label, y = Median)) +
   labs(
     x = NULL,
     y = "Effect size",
-    title = "Effects of Individual and Social Variables"
+    title = "Effects of Network Variables"
   )
 
-## ILV
+# ILV
 ggplot(ILVeffects_only, aes(x = label, y = Median)) +
-  geom_col(fill = "#4C78A8", width = 0.7) +
+  geom_col(fill = "lightcoral", width = 0.7) +
   
   geom_errorbar(
     aes(ymin = CI_Lower, ymax = CI_Upper),
@@ -947,3 +773,124 @@ ggplot(ILVeffects_only, aes(x = label, y = Median)) +
     title = "Effects of Individual and Social Variables"
   )
 
+
+#' Plot learning hazard over time
+# Read in data_list
+data_list <- readRDS("data_list_sd.RData")
+
+# 1. Extract posterior draws
+draws_df <- fit$draws(format = "df")
+
+lambda_0   <- draws_df$lambda_0
+s_prime_1  <- draws_df$`s_prime[1]`
+s_prime_2  <- draws_df$`s_prime[2]`
+s_prime_3  <- draws_df$`s_prime[3]`
+
+# 2. Supply your trial sequence and informed counts per network 
+trials <- 1:data_list$T_max   
+
+# Social input for network k at time t = mean over naive focals of: sum_others(A[k,1,t,focal,other] * Zn[t,other])
+n_networks <- data_list$N_networks  # 3 networks
+T_max      <- data_list$T_max       # 42 inter-event periods
+A          <- data_list$A           # [3, 1, 42, 1021, 1021]
+Zn         <- data_list$Zn[1, , ]  # [42, 1021]
+
+# Mean social input per network per trial
+social_input <- matrix(NA, nrow = T_max, ncol = n_networks)
+
+for (t in 1:T_max) {
+  zn_t <- Zn[t, ]          # informed status of all individuals at time t
+  naive_t <- which(zn_t == 0)  # only naive individuals can learn
+  
+  for (k in 1:n_networks) {
+    A_kt <- A[k, 1, t, , ]   # [1021 focal x 1021 other] edge weights at time t
+    
+    # For each individual, social input = sum of edge weights to informed others
+    social_input_per_ind <- A_kt %*% zn_t   # [1021 x 1] vector
+    
+    # Average over naive individuals only (they're the ones at risk)
+    if (length(naive_t) > 0) {
+      social_input[t, k] <- mean(social_input_per_ind[naive_t])
+    } else {
+      social_input[t, k] <- 0
+    }
+  }
+}
+
+social_input_df <- as.data.frame(social_input)
+colnames(social_input_df) <- data_list$network_names  # "assoc", "vert", "ecol"
+social_input_df$trial <- 1:T_max
+
+# 3. Compute hazard rates per trial, across all posterior draws
+n_draws <- nrow(draws_df)
+
+il_hazard_mat <- matrix(rep(draws_df$lambda_0, T_max), nrow = n_draws, ncol = T_max)
+
+sl_hazard_mat <- matrix(NA, n_draws, T_max)
+for (t in 1:T_max) {
+  sl_hazard_mat[, t] <- draws_df$`s_prime[1]` * social_input_df$assoc[t] +
+    draws_df$`s_prime[2]` * social_input_df$vert[t]  +
+    draws_df$`s_prime[3]` * social_input_df$ecol[t]
+}
+
+# 4. Summarise posterior (median + 90% CI)
+summarise_hazard <- function(mat, trials) {
+  tibble(
+    trial  = trials,
+    median = apply(mat, 2, median),
+    lo     = apply(mat, 2, quantile, 0.055),
+    hi     = apply(mat, 2, quantile, 0.945)
+  )
+}
+
+il_summary <- summarise_hazard(il_hazard_mat, trials) %>% mutate(type = "Individual Learning")
+sl_summary <- summarise_hazard(sl_hazard_mat, trials) %>% mutate(type = "Social Learning")
+
+plot_df <- bind_rows(il_summary, sl_summary)
+
+# Social Learning - Individual Learning difference for crossover shading
+diff_df <- tibble(
+  trial      = trials,
+  diff_med   = apply(sl_hazard_mat - il_hazard_mat, 2, median),
+  diff_lo    = apply(sl_hazard_mat - il_hazard_mat, 2, quantile, 0.055),
+  diff_hi    = apply(sl_hazard_mat - il_hazard_mat, 2, quantile, 0.945)
+)
+
+crossover_trial <- diff_df %>%
+  filter(diff_med >= 0) %>%
+  slice(1) %>%
+  pull(trial)
+
+# 5. Plot
+pal <- c("Individual Learning" = "#E07B54", "Social Learning" = "#4A90D9")
+
+ggplot(plot_df, aes(x = trial, colour = type, fill = type)) +
+  # Crossover shading
+  geom_vline(xintercept = crossover_trial, linetype = "dashed",
+             colour = "grey40", linewidth = 0.6) +
+  annotate("text", x = crossover_trial + 0.5, y = Inf,
+           label = paste0("Crossover\n(trial ", crossover_trial, ")"),
+           vjust = 1.5, hjust = 0, size = 3.2, colour = "grey30") +
+  # CI ribbons
+  geom_ribbon(aes(ymin = lo, ymax = hi), alpha = 0.2, colour = NA) +
+  # Median lines
+  geom_line(aes(y = median), linewidth = 1) +
+  scale_colour_manual(values = pal) +
+  scale_fill_manual(values = pal) +
+  labs(
+    title    = "Social vs Individual Learning Hazard Over Trials",
+    subtitle = "Shaded bands = 90% posterior credible interval",
+    x        = "Trial",
+    y        = "Hazard rate",
+    colour   = NULL, fill = NULL
+  ) +
+  theme_classic(base_size = 13) +
+  theme(
+    legend.position  = c(0.15, 0.88),
+    legend.background = element_blank(),
+    plot.title       = element_text(face = "bold")
+  )
+
+# Input group data to determine year of crossover
+group_data <- read.csv("group_data_fg.csv")
+unique(group_data$Year[group_data$event_period == 26])

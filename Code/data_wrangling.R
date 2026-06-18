@@ -10,14 +10,14 @@ if(!require(dplyr)){install.packages('dplyr'); library(dplyr)}
 ## Mapping/Graphs
 if(!require(ggmap)){install.packages('ggmap'); library(ggmap)} # register API key version = '3.0.0'
 if(!require(ggplot2)){install.packages('ggplot2'); library(ggplot2)} 
-if(!require(raster)){install.packages('raster'); library(raster)} 
 if(!require(sf)){install.packages('sf'); library(sf)} # Convert degrees to meters
 if(!require(sp)){install.packages('sp'); library(sp)} # Convert degrees to meters
 if(!require(adehabitatHR)){install.packages('adehabitatHR'); library(adehabitatHR)} # Caluculate MCPs and Kernel density 
-if(!require(maps)){install.packages('maps'); library(maps)} # To map florida
-if(!require(ggOceanMaps)){install.packages('ggOceanMaps'); library(ggOceanMaps)} # To map florida
-if(!require(ggspatial)){install.packages('ggspatial'); library(ggspatial)} # To map florida
-if(!require(prettymapr)){install.packages('prettymapr'); library(prettymapr)} # To map florida
+if(!require(hrbrthemes)){install.packages('hrbrthemes'); library(hrbrthemes)} # theme
+if(!require(ggExtra)){install.packages('ggExtra'); library(ggExtra)} # for theme_ipsum()
+## GAM
+if(!require(brms)){install.packages('brms'); library(brms)} # run GAMs
+if(!require(lubridate)){install.packages('lubridate'); library(lubridate)} # To map florida
 
 # Set relative path working directory
 setwd("../Data") 
@@ -52,8 +52,8 @@ codes_in_all <- rownames(tab > 10)
 filtered_data <- orig_data[orig_data$Code %in% codes_in_all, ]
 
 # If needed subset
-#start_year <- 2004
-#filtered_data <- subset(filtered_data, Year %in% start_year:2014)
+start_year <- 1995
+filtered_data <- subset(filtered_data, Year %in% start_year:2014)
 
 # Add a month rank column
 filtered_data$Date <- as.Date(as.character(filtered_data$Date), format="%Y-%m-%d")
@@ -82,6 +82,9 @@ write.csv(filtered_data, "filtered_data.csv")
 # Read in data
 filtered_data <- read.csv("filtered_data.csv")
 
+# How many total dolphins are there?
+length(unique(filtered_data$Code))
+
 # See which individuals overlap
 presence_df <- do.call(
   rbind,
@@ -102,6 +105,76 @@ rownames(presence_df) <- NULL
 sum(presence_df$SD == T & presence_df$FG == F) 
 # Combine BG and SD but not FG
 
+# What percentage does the behavior take up for foraging
+# Subset for only dolphins seen foraging
+forage_data <- subset(
+  filtered_data,
+  grepl("Feed|pFeed", Behaviors)
+)
+
+# Separate data before and after HAB
+forage_data_Pre <- subset(forage_data, Year < 2005)
+forage_data_Post <- subset(forage_data, Year > 2004)
+
+# Catergorize into raw data
+## Pre
+rawHI_diff_pre <- as.data.frame(table(forage_data_Pre$Code,
+                                  forage_data_Pre$DiffHI))
+colnames(rawHI_diff_pre) <- c("Code", "DiffHI", "Freq")
+## Post
+rawHI_diff_post <- as.data.frame(table(forage_data_Post$Code,
+                                  forage_data_Post$DiffHI))
+colnames(rawHI_diff_post) <- c("Code", "DiffHI", "Freq")
+
+# Categorize ID to Sightings
+## Pre
+IDbehav_pre <- as.data.frame(table(forage_data_Pre$Code))
+colnames(IDbehav_pre) <- c("Code", "Sightings")
+## Post
+IDbehav_post <- as.data.frame(table(forage_data_Post$Code))
+colnames(IDbehav_post) <- c("Code", "Sightings")
+
+# Divide the two
+## Pre
+HC_props_pre <- rawHI_diff_pre %>%
+  left_join(IDbehav_pre %>% select(Code, Sightings), by = "Code") %>%
+  mutate(Prop = Freq / Sightings)
+# Get rid of individuals with zero
+HC_props_pre <- HC_props_pre[HC_props_pre$Prop != 0,]
+## Post
+HC_props_post <- rawHI_diff_post %>%
+  left_join(IDbehav_post %>% select(Code, Sightings), by = "Code") %>%
+  mutate(Prop = Freq / Sightings)
+# Get rid of individuals with zero
+HC_props_post <- HC_props_post[HC_props_post$Prop != 0,]
+
+# Distribution of SD foraging
+## Pre
+hist(
+  HC_props_pre$Prop[HC_props_pre$DiffHI == "SD"],
+  breaks = seq(0, 1, by = 0.05)
+)
+median(HC_props_pre$Prop[HC_props_pre$DiffHI == "SD"])
+## Post
+hist(
+  HC_props_post$Prop[HC_props_post$DiffHI == "SD"],
+  breaks = seq(0, 1, by = 0.05)
+)
+median(HC_props_post$Prop[HC_props_post$DiffHI == "SD"])
+
+# Distribution of FG foraging
+## Pre
+hist(
+  HC_props_pre$Prop[HC_props_pre$DiffHI == "FG"],
+  breaks = seq(0, 1, by = 0.05)
+)
+median(HC_props_pre$Prop[HC_props_pre$DiffHI == "FG"])
+## Post
+hist(
+  HC_props_post$Prop[HC_props_post$DiffHI == "FG"],
+  breaks = seq(0, 1, by = 0.05)
+)
+median(HC_props_post$Prop[HC_props_post$DiffHI == "FG"])
 
 # If it has FG or SD then don't assign None
 cleaned <- filtered_data %>%
@@ -116,7 +189,7 @@ HI_diff <- as.data.frame(table(cleaned$Code, cleaned$DiffHI, cleaned$sixmon))
 colnames(HI_diff) <- c("Code", "DiffHI", "sixmon", "Freq")
 
 # Add dates
-seq_dates <- seq(from = as.Date("2004-01-01"),
+seq_dates <- seq(from = as.Date("1995-01-01"),
                  to   = as.Date("2014-12-01"),
                  by   = "6 month")
 
@@ -174,9 +247,13 @@ time_series_data <- time_series_data[time_series_data$HC != 'None',]
 
 # Make a line plot of naive dolphins and begging, depredating and fixed-gear 
 ggplot(time_series_data, aes(x = Date, y = ID_count, color = HC)) +
-  geom_line() +
+  geom_line(linewidth = 1.1) +
+  scale_color_manual(values = c(
+    "springgreen4",
+    "lightcoral"
+  )) +
   xlab("Date") +
-  ylab("No. of Individuals") +
+  ylab("Number of Individuals") +
   labs(color = "HC Category") +
   theme_minimal()
 
@@ -222,6 +299,49 @@ filtered_data$age_class <- ifelse(
   ifelse(filtered_data$age > 4, "juvenile", "calf")
 )
 
+# How many dolphins from the individual analyses
+## SD
+group_data_sd <- read.csv("group_data_sd.csv")
+
+group_data_sd <- merge(
+  group_data_sd,
+  ILV_pat[, c("Code", "Sex")],
+  by = "Code",
+  all.x = TRUE
+)
+
+### Sex
+length(unique(group_data_sd$Code[group_data_sd$Sex == "Female"]))
+length(unique(group_data_sd$Code[group_data_sd$Sex == "Male"]))
+length(unique(group_data_sd$Code[is.na(group_data_sd$Sex)]))
+### HC
+length(unique(group_data_sd$Code[group_data_sd$DiffHI == "SD"]))
+### Both
+length(unique(group_data_sd$Code[group_data_sd$DiffHI == "SD" & group_data_sd$Sex == "Female"]))
+length(unique(group_data_sd$Code[group_data_sd$DiffHI == "SD" & group_data_sd$Sex == "Male"]))
+length(unique(group_data_sd$Code[group_data_sd$DiffHI == "SD" & is.na(group_data_sd$Sex)]))
+
+## FG
+group_data_fg <- read.csv("group_data_fg.csv")
+
+group_data_fg <- merge(
+  group_data_fg,
+  ILV_pat[, c("Code", "Sex")],
+  by = "Code",
+  all.x = TRUE
+)
+
+### Sex
+length(unique(group_data_fg$Code[group_data_fg$Sex == "Female"]))
+length(unique(group_data_fg$Code[group_data_fg$Sex == "Male"]))
+length(unique(group_data_fg$Code[is.na(group_data_fg$Sex)]))
+### HC
+length(unique(group_data_fg$Code[group_data_fg$DiffHI == "FG"]))
+### Both
+length(unique(group_data_fg$Code[group_data_fg$DiffHI == "FG" & group_data_fg$Sex == "Female"]))
+length(unique(group_data_fg$Code[group_data_fg$DiffHI == "FG" & group_data_fg$Sex == "Male"]))
+length(unique(group_data_fg$Code[group_data_fg$DiffHI == "FG" & is.na(group_data_fg$Sex)]))
+
 # Count each dolphin behavior
 count_data <- as.data.frame(
   table(
@@ -256,7 +376,7 @@ ggplot(count_data,
     fill = "Behavior"
   ) +
   scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
-  scale_fill_manual(values = c("SD" = "steelblue", "FG" = "darkorange")) +
+  scale_fill_manual(values = c("SD" = "lightcoral", "FG" = "springgreen4")) +
   theme_classic()
 
 
@@ -345,8 +465,18 @@ forage_data <- subset(
 # Subset for HC behaviors only
 forage_data <- subset(
   forage_data,
-  Code %in% unique(Code[DiffHI %in% c("SD", "FG")])
+  DiffHI == "SD" | DiffHI == "FG"
 )
+
+# Get coordinates with HC only
+HC_coordinates <- forage_data[c("Date", "Year", "Code", "StartLon", "StartLat", "DiffHI")]
+# Add HAB count
+HC_coordinates$HAB_time <- ifelse(HC_coordinates$Year > 2005, 2, 1)
+# Now create a list for each year
+HC_list <- split(HC_coordinates, HC_coordinates$HAB_time)
+# Save data
+write.csv(HC_list[[1]], "HC_map_PreHAB.csv")
+write.csv(HC_list[[2]], "HC_map_PostHAB.csv")
 
 # See which individuals overlap
 presence_df <- do.call(
@@ -364,11 +494,21 @@ presence_df <- as.data.frame(presence_df)
 presence_df$Code <- rownames(presence_df)
 rownames(presence_df) <- NULL
 
-sum(presence_df$SD == T & presence_df$FG == F) 
-# 70 SD, 46 FG, 19 Both
+sum(presence_df$SD == T & presence_df$FG == T) 
+# 69 SD, 46 FG, 19 Both
 
 # Add HAB count
 forage_data$HAB_time <- ifelse(forage_data$Year > 2006, 2, 1)
+
+# Create HC data only 
+HC_data <- subset(forage_data, DiffHI != "None")
+
+# Now create a list for each year
+HC_list <- split(HC_data, HC_data$HAB_time)
+
+# save data
+write.csv(HC_list[[1]], "HC_data_preHAB.csv")
+write.csv(HC_list[[2]], "HC_data_postHAB.csv")
 
 # Now create a list for each year
 forage_list <- split(forage_data, forage_data$HAB_time)
@@ -476,9 +616,6 @@ for (i in seq_along(homerange50)) {
   centroid_list[[i]] <- centroids_df
 }
 
-saveRDS(centroid_list, "centroid_list.RData")
-centroid_list <- readRDS("centroid_list.RData")
-
 # Connect ids to human-centric behavior
 # Get unique IDs
 ids <- unique(forage_data$Code)
@@ -526,44 +663,140 @@ for (i in seq_along(centroid_list)) {
 saveRDS(centroid_list, "centroid_list.RData")
 centroid_list <- readRDS("centroid_list.RData")
 
-# Upload florida map
-register_google(key = "AIzaSyCNUfReSv2TSoMrxLnDC0glT8kffvSpLGM")
+# Seperate saved centroids
+write.csv(centroid_list[[1]], "centroids_PreHAB.csv")
+write.csv(centroid_list[[2]], "centroids_PostHAB.csv")
 
-bbox <- st_bbox(poly_data)
+# Read in human data
+boat_data <- read.csv("human_dolphin_data.csv")
 
-florida_map <- basemap(
-  limits = c(
-    bbox["xmin"] - 0.2,
-    bbox["xmax"] + 0.2,
-    bbox["ymin"] - 0.2,
-    bbox["ymax"] + 0.2
+# Subset with only boats present
+boat_data <- subset(boat_data, X.Boats > 0 |
+                      X.CrabPots > 0 |
+                      X.Lines > 0)
+
+# Fix data INF
+boat_data$X.Boats <- ifelse(boat_data$X.Boats < 0, 0, boat_data$X.Boats)
+boat_data$X.CrabPots <- ifelse(boat_data$X.CrabPots < 0, 0, boat_data$X.CrabPots)
+boat_data$X.Lines <- ifelse(boat_data$X.Lines < 0, 0, boat_data$X.Lines)
+
+# Save data
+write.csv(boat_data, "boat_data.csv")
+
+#### PART 6: Measure HC predictability and abundance ####
+
+# Read in data
+boat_data <- read.csv("boat_data.csv")
+
+# Diagnose data before model
+hist(boat_data$X.CrabPots)
+hist(boat_data$X.Lines)
+## Negative binomial
+
+# Look at abundance
+pot_data <- boat_data[boat_data$X.CrabPots != 0,]
+line_data <- boat_data[boat_data$X.Lines != 0,]
+
+abund_data <- bind_rows(
+  data.frame(Abundance = pot_data$X.CrabPots, Gear = "Pots"),
+  data.frame(Abundance = line_data$X.Lines, Gear = "Lines")
+)
+
+# Get average
+mean(abund_data$Abundance[abund_data$Gear == "Pots"])
+sample_size_pot <- length(abund_data$Abundance[abund_data$Gear == "Pots"])
+sd(abund_data$Abundance[abund_data$Gear == "Pots"]) / sqrt(sample_size_pot)
+
+mean(abund_data$Abundance[abund_data$Gear == "Lines"])
+sample_size_line <- length(abund_data$Abundance[abund_data$Gear == "Lines"])
+sd(abund_data$Abundance[abund_data$Gear == "Lines"]) / sqrt(sample_size_line)
+
+## Fixed-gear foraging
+
+# Run GAM model
+pots_model <- brm(
+  X.CrabPots ~ 
+    t2(StartLon, StartLat) +
+    s(as.numeric(Date)) +
+    s(StartHour, bs = "cc"),
+  family = negbinomial(),
+  data = boat_data,
+  prior = c(
+    prior(normal(0, 2), class = "Intercept"),
+    prior(exponential(1), class = "sds")
   ),
-  bathymetry = F 
-) +
-  theme_void()
+  chains = 4, 
+  cores = 4,
+  iter = 4000
+)
 
+saveRDS(pots_model, "pots_model.RData")
+pots_model <- readRDS("pots_model.RData")
+summary(pots_model)
 
-# Plot data
-for (i in unique(poly_data$dataset)) {
-  
-  idx <- as.numeric(gsub("Dataset ", "", i))
-  centroids_df <- centroid_list[[idx]]
-  
-  p <- florida_map +
-    
-    # ONLY centroids
-    geom_point(
-      data = centroids_df,
-      aes(x = Longitude, y = Latitude),
-      color = "black",
-      size = 3.5
-    ) +
-    geom_point(
-      data = centroids_df,
-      aes(x = Longitude, y = Latitude, color = HC),
-      size = 2.5
-    )
-  
-  print(p)
-}
+# Predict uncertainty
+pp_check(pots_model)
 
+# Predict uncertainty
+pp_check(lines_model)
+
+# Create plot for time series
+# Create grid
+time_grid <- data.frame(
+  StartLon = median(boat_data$StartLon),
+  StartLat = median(boat_data$StartLat),
+  Date = seq(min(boat_data$Date), max(boat_data$Date), length.out = 100),
+  StartHour = median(boat_data$StartHour)
+)
+
+time_grid$DateNum <- as.numeric(time_grid$Date)
+
+preds_time <- posterior_epred(pots_model, newdata = transform(time_grid, Date = DateNum))
+
+time_grid$mean <- apply(preds_time, 2, mean)
+time_grid$sd   <- apply(preds_time, 2, sd)
+
+# Plot
+ggplot(time_grid, aes(x = Date)) +
+  geom_line(aes(y = mean), color = "#2c7fb8", linewidth = 1.2) +
+  geom_ribbon(aes(ymin = mean - sd, ymax = mean + sd),
+              fill = "#7fcdbb", alpha = 0.4) +
+  scale_x_date(date_labels = "%b %Y", date_breaks = "3 months") +
+  theme_minimal()
+
+## Scavenging and depredating foraging
+
+# Run GAM model
+lines_model <- brm(
+  X.Lines ~ 
+    t2(StartLon, StartLat) +
+    s(as.numeric(Date)) +
+    s(StartHour, bs = "cc"),
+  family = negbinomial(),
+  data = boat_data,
+  prior = c(
+    prior(normal(0, 2), class = "Intercept"),
+    prior(exponential(1), class = "sds")
+  ),
+  chains = 4, 
+  cores = 4,
+  iter = 4000
+)
+
+saveRDS(lines_model, "lines_model.RData")
+lines_model <- readRDS("lines_model.RData")
+summary(lines_model)
+
+# Create plot for time series
+preds_time <- posterior_epred(lines_model, newdata = transform(time_grid, Date = DateNum))
+
+time_grid$mean <- apply(preds_time, 2, mean)
+time_grid$sd   <- apply(preds_time, 2, sd)
+
+# Plot
+ggplot(time_grid, aes(x = Date)) +
+  geom_line(aes(y = mean), color = "#d81b60", linewidth = 1.2) +
+  geom_ribbon(aes(ymin = mean - sd, ymax = mean + sd),
+              fill = "#f8b4c9", alpha = 0.4) +
+  scale_x_date(date_labels = "%b %Y", date_breaks = "3 months") +
+  theme_minimal()
