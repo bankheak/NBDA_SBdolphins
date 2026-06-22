@@ -360,7 +360,7 @@ saveRDS(kinship_matrix, "kinship_matrix.RData")
 
 
 
-#### PART 2: Create acquisition data for model input ####
+#### PART 2: Calculate acquisition and predictor data ####
 
 # Read in all network data
 nxn <- readRDS("nxn_sd.RData")
@@ -486,7 +486,7 @@ ILV_all <- read.csv("ILV_SD_subset.csv")
 ILV_all <- subset(ILV_all, Alias %in% unique(edge_list$focal))
 
 # Create acquisition data
-# 1. Filter group_data for confirmed HC behavior after first aquisition date
+# 1. Filter group_data for confirmed HC behavior after first acquisition date
 HC <- "SD"
 first_month <- min(group_data$event_period[group_data$DiffHI == HC])
 hi_data <- group_data[group_data$DiffHI == HC & group_data$event_period != first_month, ]
@@ -523,7 +523,6 @@ write.csv(event_data, "event_data_sd.csv") # Save data
 # Remove unused individuals
 edge_list <- subset(edge_list, focal %in% event_data$id)
 edge_list <- subset(edge_list, other %in% event_data$id)
-saveRDS(edge_list, "edge_list_sd.RData") # Save data
 
 #' Create static and dynamic individual level variables
 # Make sex binary
@@ -537,6 +536,7 @@ ILV_all$BirthYear <- ifelse(is.na(ILV_all$BirthYear), 1985, ILV_all$BirthYear)
 # Create constant ILV dataframe
 ILV_c <- data.frame(id = ILV_all$Alias,
                       sex = ILV_all$Sex)
+write.csv(ILV_c, "ILV_c_sd.csv") # Save data
 
 # Create time varying ILV dataframe
 ILV_tv <- data.frame(
@@ -552,6 +552,7 @@ ILV_tv$age_group <- ifelse(ILV_tv$age >= 10, "adult",
                            ifelse(ILV_tv$age > 4, "juvenile",
                                   ifelse(ILV_tv$age > 0, "calf", "unborn")))
 ILV_tv <- ILV_tv[, -4] # Get rid of unnecessary row
+write.csv(ILV_tv, "ILV_tv_sd.csv") # Save data
 
 #' Create static weights based on the proportion of time each individual 
 #' engaged in the target behavior
@@ -612,9 +613,7 @@ HI_matrix <- data.frame(
 
 # Get rid of unused individuals
 HI_matrix <- HI_matrix[HI_matrix$id %in% event_data$id, ]
-
-# Read in edge list
-edge_list <- readRDS("edge_list_sd.RData")
+write.csv(HI_matrix, "HI_matrix_sd.csv") # Save data
 
 # Add vertical network to edge_list
 edge_list_vert <- do.call(rbind, lapply(seq_along(SRI_vert_all), function(t) {
@@ -652,7 +651,25 @@ edge_list$ecol <- edge_list_ecol$ecol
 
 # Rearrange
 edge_list <- edge_list[, c("focal", "other", "trial", 
-                       "assoc", "vert", "ecol", "time")]
+                           "assoc", "vert", "ecol", "time")]
+
+saveRDS(edge_list, "edge_list_sd.RData") # Save data
+
+
+#### PART 3: Aggregate data for model input ####
+
+# Read in event data
+event_data <- read.csv("event_data_sd.csv")
+
+# Read in edge list
+edge_list <- readRDS("edge_list_sd.RData")
+
+# Read in ILV data
+ILV_tv <- read.csv("ILV_tv_sd.csv")
+ILV_c <- read.csv("ILV_c_sd.csv")
+
+# Read in weighted data
+HI_matrix <- read.csv("HI_matrix_sd.csv")
 
 # Input data
 data_list <- import_user_STb(
@@ -668,7 +685,7 @@ data_list <- import_user_STb(
 saveRDS(data_list, "data_list_sd.RData") # Save data
 
 
-#### PART 3: Run the model ####
+#### PART 4: Run the model ####
 
 # Input data_list
 data_list <- readRDS("data_list_sd.RData")
@@ -749,7 +766,7 @@ fit$cmdstan_diagnose()
 
 STb_save(fit, output_dir = "cmdstan_saves_sd", name="my_first_fit") # Save model
 
-#### PART 4: Summary Outputs ####
+#### PART 5: Summarize Outputs ####
 
 # Read in model output
 fit <- readRDS('cmdstan_saves_sd/my_first_fit.rds')
