@@ -3,7 +3,7 @@
 This folder contains all the code for the NBDA_SBdolphins repository. The following describes the analysis steps in the `NBDA_Bayes_sd.R` file. 
 
 ## Data analysis process
-<img src="https://github.com/user-attachments/assets/910b3c00-0a76-4735-b39b-6cb383488591" align="middle" width="500px"/>
+<img width="1461" height="622" alt="NBDA_workflow" src="https://github.com/user-attachments/assets/7312c167-ed93-474a-b76c-74a8117aadfa" />
 
 ## Supplemental Step 1: Data Wrangling (code available upon request)
 
