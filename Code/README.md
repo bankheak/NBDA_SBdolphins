@@ -3,7 +3,7 @@
 This folder contains all the code for the NBDA_SBdolphins repository. The following describes the analysis steps in the `NBDA_Bayes_sd.R` file. 
 
 ## Data analysis process
-<img src="https://github.com/user-attachments/assets/910b3c00-0a76-4735-b39b-6cb383488591" align="middle" width="500px"/>
+<img width="1461" height="622" alt="NBDA_workflow" src="https://github.com/user-attachments/assets/7312c167-ed93-474a-b76c-74a8117aadfa" />
 
 ## Supplemental Step 1: Data Wrangling (code available upon request)
 
@@ -36,7 +36,11 @@ and age as varying.
 
 Finally, the proportion of time each individual spent engaging in human-centric behavior was calculated and added as a static weight in the data list.
 
-## PART 3: Run the model
+## PART 3: Create acquisition data for model input
+
+I read in the event_data, edge_list, ILV_c, ILV_tv, and HI_matrix wrangled from the previous step and combined it into a import_user_STb() data list to be run in the model.
+
+## PART 4: Run the model
 
 I ran a multi-network-based diffusion analysis using a Markov chain Monte Carlo (MCMC) sampler under a Bayesian statistical framework. I used a test model to run the raw data and found that 
 the model detected N_veff = 0, which meant that the likihood provided no information, this lead me to change the baseline learning rate to be positive and bounded and change the priors.
@@ -53,6 +57,10 @@ $\Gamma_i \sim \sum_{k=1}^{V} \gamma_k x_{k,i}$
 
 where λi(t) is the rate at which individual i acquires the target behavior as a function of time, λo(t) is a baseline rate function, zi(t) is the ‘status’ of individual i at time t (1 = informed; 0 = naïve), N is the number of individuals in the population, w_j is the transmission weight of the rate at which each individual performed human-centric foraging behavior during difusion, n is the number of networks and aij indicates the connection strength from j to i from the social networks, xk,i is the value of the kth variable for individual i, βk is the coefficient of the effect of variable k (sex, age and HAB exposure) on asocial learning, and γk is the coefficient of the effect of variable k on social transmission. The key model output will be the relative strength of social transmission, s, the value of which is estimated when the model is fitted to the data.
 
-## PART 4: Summary Outputs
+## PART 5: Summary Outputs
 
-I create summary outputs for the model.
+I first ran posterior predictive checks to make sure the observed data lines up with model predictions.
+
+I then plotted model predictor effect sizes separated by social and individual ILV versus network effects.
+
+Finally I extracted hazard rates for target behaviors. To do this I first extracted posterior distributions and the social and individual inputs for each network over each inter-event period. I then used these estimates to compute hazard rates per period, across all posterior draws. I then took the summary of these and plotted them to understand the difference in social versus individual learning over time. Finally, I found the trial when social learning overtook individual learning and related it to the study year.
