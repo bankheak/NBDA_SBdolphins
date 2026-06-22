@@ -55,4 +55,8 @@ where λi(t) is the rate at which individual i acquires the target behavior as a
 
 ## PART 4: Summary Outputs
 
-I create summary outputs for the model.
+I first ran posterior predictive checks to make sure the observed data lines up with model predictions.
+
+I then plotted model predictor effect sizes separated by social and individual ILV versus network effects.
+
+Finally I extracted hazard rates for target behaviors. To do this I first extracted posterior distributions and the social and individual inputs for each network over each inter-event period. I then used these estimates to compute hazard rates per period, across all posterior draws. I then took the summary of these and plotted them to understand the difference in social versus individual learning over time. Finally, I found the trial when social learning overtook individual learning and related it to the study year.
