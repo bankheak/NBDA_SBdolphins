@@ -60,7 +60,7 @@ exclude_codes <- ILV_all$Alias[ILV_all$Demons_HI_forage == 'yes']
 
 # 2. Identify first observation of HC for each Code
 first_HI_index <- tapply(seq_len(nrow(group_data)), group_data$Code, function(idx) {
-  hi_rows <- idx[group_data$Confirmed_HI[idx] == 1]
+  hi_rows <- idx[group_data$Confirmed_HI[idx] == HC]
   if (length(hi_rows) > 0) hi_rows[1] else Inf
 })
 
@@ -113,7 +113,7 @@ group_data <- group_data %>%
 group_data <- subset(group_data, event_period > 0)
 
 # Save data
-write.csv(group_data, "group_data_sd.csv")
+write.csv(group_data, "group_data_fg.csv")
 write.csv(ILV_all, "ILV_FG_subset.csv")
 
 # Now create a list for each time period to calculate association for inter-events
@@ -453,6 +453,9 @@ saveRDS(edge_list, "edge_list_fg.RData") # Save data
 # Read in event data
 event_data <- read.csv("event_data_fg.csv")
 
+# Read in edge list
+edge_list <- readRDS("edge_list_fg.RData")
+
 # Read in ILV data
 ILV_tv <- read.csv("ILV_tv_fg.csv")
 ILV_c <- read.csv("ILV_c_fg.csv")
@@ -726,7 +729,7 @@ ILVeffects_only <- results_clean %>%
 #' Visual Plot of effect sizes
 # Networks
 ggplot(Neffects_only, aes(x = label, y = Median)) +
-  geom_col(fill = "lightcoral", width = 0.7) +
+  geom_col(fill = "springgreen4", width = 0.7) +
   
   geom_errorbar(
     aes(ymin = CI_Lower, ymax = CI_Upper),
@@ -757,7 +760,7 @@ ggplot(Neffects_only, aes(x = label, y = Median)) +
 
 # ILV
 ggplot(ILVeffects_only, aes(x = label, y = Median)) +
-  geom_col(fill = "lightcoral", width = 0.7) +
+  geom_col(fill = "springgreen4", width = 0.7) +
   
   geom_errorbar(
     aes(ymin = CI_Lower, ymax = CI_Upper),
@@ -789,7 +792,7 @@ ggplot(ILVeffects_only, aes(x = label, y = Median)) +
 
 #' Plot learning hazard over time
 # Read in data_list
-data_list <- readRDS("data_list_sd.RData")
+data_list <- readRDS("data_list_fg.RData")
 
 # 1. Extract posterior draws
 draws_df <- fit$draws(format = "df")
@@ -878,12 +881,6 @@ crossover_trial <- diff_df %>%
 pal <- c("Individual Learning" = "#E07B54", "Social Learning" = "#4A90D9")
 
 ggplot(plot_df, aes(x = trial, colour = type, fill = type)) +
-  # Crossover shading
-  geom_vline(xintercept = crossover_trial, linetype = "dashed",
-             colour = "grey40", linewidth = 0.6) +
-  annotate("text", x = crossover_trial + 0.5, y = Inf,
-           label = paste0("Crossover\n(trial ", crossover_trial, ")"),
-           vjust = 1.5, hjust = 0, size = 3.2, colour = "grey30") +
   # CI ribbons
   geom_ribbon(aes(ymin = lo, ymax = hi), alpha = 0.2, colour = NA) +
   # Median lines
@@ -906,4 +903,4 @@ ggplot(plot_df, aes(x = trial, colour = type, fill = type)) +
 
 # Input group data to determine year of crossover
 group_data <- read.csv("group_data_fg.csv")
-unique(group_data$Year[group_data$event_period == 26])
+unique(group_data$Year[group_data$event_period == 14])

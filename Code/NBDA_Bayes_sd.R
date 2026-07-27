@@ -60,7 +60,7 @@ exclude_codes <- ILV_all$Alias[ILV_all$Demons_HI_forage == 'yes']
 
 # 2. Identify first observation of HC for each Code
 first_HI_index <- tapply(seq_len(nrow(group_data)), group_data$Code, function(idx) {
-  hi_rows <- idx[group_data$Confirmed_HI[idx] == 1]
+  hi_rows <- idx[group_data$Confirmed_HI[idx] == HC]
   if (length(hi_rows) > 0) hi_rows[1] else Inf
 })
 
@@ -606,6 +606,7 @@ ids <- unique(prob_HI$Code)
 HIProp <- prob_HI$HIprop
 
 # Create dataframe for HC prop weights
+## CHECK IF THIS HAS HIGHER VAR FOR SD OR FG?
 HI_matrix <- data.frame(
   trial = 1,
   id = ids,
@@ -677,8 +678,8 @@ data_list <- import_user_STb(
   networks = edge_list,
   ILV_c = ILV_c,
   ILV_tv = ILV_tv,
-  ILVi = c("age_group", "sex", "HAB"),
-  ILVs = c("age_group", "sex", "HAB"),
+  ILVi = c("age_group", "sex"),
+  ILVs = c("age_group", "sex"),
   t_weights = HI_matrix
 )
 
@@ -941,7 +942,7 @@ ggplot(Neffects_only, aes(x = label, y = Median)) +
   geom_errorbar(
     aes(ymin = CI_Lower, ymax = CI_Upper),
     width = 0.15,
-    size = 0.6
+    linewidth = 0.6
   ) +
   
   geom_hline(yintercept = 0, linetype = "dashed", color = "black") +
@@ -1088,12 +1089,6 @@ crossover_trial <- diff_df %>%
 pal <- c("Individual Learning" = "#E07B54", "Social Learning" = "#4A90D9")
 
 ggplot(plot_df, aes(x = trial, colour = type, fill = type)) +
-  # Crossover shading
-  geom_vline(xintercept = crossover_trial, linetype = "dashed",
-             colour = "grey40", linewidth = 0.6) +
-  annotate("text", x = crossover_trial + 0.5, y = Inf,
-           label = paste0("Crossover\n(trial ", crossover_trial, ")"),
-           vjust = 1.5, hjust = 0, size = 3.2, colour = "grey30") +
   # CI ribbons
   geom_ribbon(aes(ymin = lo, ymax = hi), alpha = 0.2, colour = NA) +
   # Median lines
@@ -1116,4 +1111,4 @@ ggplot(plot_df, aes(x = trial, colour = type, fill = type)) +
 
 # Input group data to determine year of crossover
 group_data <- read.csv("group_data_sd.csv")
-unique(group_data$Year[group_data$event_period == 26])
+unique(group_data$Year[group_data$event_period == 16])
