@@ -6,15 +6,14 @@
 #if(!require(devtools)){install.packages('devtools'); library(devtools)} # To load NBDA
 #if(!require(remotes)){install.packages('remotes'); library(remotes)} 
 #remotes::install_github("stan-dev/cmdstanr") # If STBayes doesn't download
-# Install NBDA package
-#devtools::install_github("whoppitt/NBDA")
-# install devtools if not already
-#devtools::install_github("michaelchimento/STbayes")
 #cmdstanr::set_cmdstan_path(cmdstanr::install_cmdstan())
+#devtools::install_github("whoppitt/NBDA")
+#devtools::install_github("michaelchimento/STbayes")
 if(!require(pacman)){install.packages('pacman'); library(pacman)} # to load all packages
 pacman::p_load(stringr, tidyr, abind, STbayes, ggplot2,
                dplyr, posterior, tidyverse, asnipe, sf,
                sp, adehabitatHR, kinship2, doParallel)
+if(!require(STbayes)){install.packages('STbayes'); library(STbayes)} # FOR HPC
 
 # Set relative path working directory
 setwd("../Data") 
@@ -691,11 +690,17 @@ saveRDS(data_list, "data_list_sd.RData") # Save data
 # Input data_list
 data_list <- readRDS("data_list_sd.RData")
 
-# Generate the model
+# Generate the different models
+## Multi-network model
 model_full <- generate_STb_model(data_list, 
-                                 data_type = "continuous_time",
-                                 gq = T, 
+                                 data_type = "continuous_time", 
                                  est_acqTime = T)
+
+## Asocial only contrained model
+model_asoc = generate_STb_model(data_list, 
+                                data_type = "continuous_time",
+                                model_type="asocial", 
+                                est_acqTime = T)
 
 # Diagnoses notes
 #' Detected N_veff = 0, likihood provides no information
@@ -706,6 +711,7 @@ model_full <- generate_STb_model(data_list,
 
 # Do this in the model.STAN file
 # writeLines(model_full, "model_strong_priors_sd.stan")
+# writeLines(model_asoc, "AS_model_strong_priors_sd.stan")
 
 # Precompute E for faster computing
 # Extract needed pieces
@@ -739,7 +745,6 @@ data_list$A <- NULL
 
 
 # Test run
-
 # fit_test <- fit_STb(
 #   data_list,
 #   "model_strong_priors_sd.stan",
@@ -750,8 +755,8 @@ data_list$A <- NULL
 #   refresh = 50
 # )
 
-# Fit the model
-fit <- fit_STb(
+# Fit the full model
+full_fit <- fit_STb(
   data_list,
   "model_strong_priors_sd.stan",
   chains = 4,
@@ -763,9 +768,53 @@ fit <- fit_STb(
   refresh = 100
 )
 
-fit$cmdstan_diagnose()
+full_fit$cmdstan_diagnose()
+STb_save(full_fit, output_dir = "cmdstan_saves_sd", name="my_first_fit") # Save model
 
-STb_save(fit, output_dir = "cmdstan_saves_sd", name="my_first_fit") # Save model
+# Fit the asocial model
+asocial_fit <- fit_STb(data_list,
+                       "AS_model_strong_priors_sd.stan",
+                       parallel_chains = 4,
+                       chains = 4,
+                       cores = 4,
+                       iter_warmup = 2000,
+                       iter_sampling = 2000,
+                       adapt_delta = 0.99,
+                       refresh = 100)
+
+asocial_fit$cmdstan_diagnose()
+STb_save(asocial_fit, output_dir = "cmdstan_saves_sd_as", name="my_first_fit") # Save model
+
+# Model comparisons
+## Read in data from HPC
+full_fit <- readRDS('cmdstan_saves_sd/my_first_fit.rds')
+asocial_fit <- readRDS('cmdstan_saves_sd_as/my_first_fit.rds')
+
+## Run LOOIC
+loo_output = STb_compare(full_fit, asocial_fit, method="loo-psis")
+print(loo_output$comparison, simplify = FALSE)
+
+## Plot
+comparison_df <- as.data.frame(loo_output$comparison)
+comparison_df$model <- rownames(comparison_df)
+
+ggplot(comparison_df, aes(x = reorder(model, elpd_diff), y = elpd_diff)) +
+  geom_point(size = 3) + #elpd_diff
+  geom_errorbar(aes(ymin = elpd_diff - 1.96*se_diff, 
+                    ymax = elpd_diff + 1.96*se_diff), width = 0.2) + #1.96*SE of elpd diff (95% interval)
+  coord_flip() +
+  labs(x = "Model", y = "ELPD Difference", title = "Model Comparison") +
+  theme_minimal()
+
+pareto_df = as.data.frame(loo_output$pareto_diagnostics)
+ggplot(pareto_df, aes(x=observation, y=pareto_k, color=model))+
+  geom_point() +
+  scale_color_viridis_d(begin=0.2, end=0.7)+
+  geom_hline(yintercept = 0.7, linetype="dashed", color="orange")+
+  geom_hline(yintercept = 1, linetype="dashed", color="red")+
+  labs(x="Observation", y="Pareto-k value", title="Pareto-k diagnostics")+
+  theme_minimal()
+
 
 #### PART 5: Summarize Outputs ####
 
@@ -1085,28 +1134,79 @@ crossover_trial <- diff_df %>%
   slice(1) %>%
   pull(trial)
 
-# 5. Plot
-pal <- c("Individual Learning" = "#E07B54", "Social Learning" = "#4A90D9")
+# Save data
+saveRDS(plot_df, "plot_df_sd.RData")
 
-ggplot(plot_df, aes(x = trial, colour = type, fill = type)) +
-  # CI ribbons
-  geom_ribbon(aes(ymin = lo, ymax = hi), alpha = 0.2, colour = NA) +
-  # Median lines
-  geom_line(aes(y = median), linewidth = 1) +
+# Read in plot data and merge
+plot_df_sd <- readRDS("plot_df_sd.RData")
+plot_df_fg <- readRDS("plot_df_fg.RData")
+
+# merge
+plot_df_sd <- plot_df_sd %>%
+  mutate(behavior = "SD")
+
+plot_df_fg <- plot_df_fg %>%
+  mutate(behavior = "FG")
+
+plot_df <- bind_rows(
+  plot_df_sd,
+  plot_df_fg
+)
+
+# 5. Plot
+
+# One individual-learning curve
+ind_df <- plot_df_all %>%
+  filter(type == "Individual Learning") %>%
+  distinct(trial, median, lo, hi, .keep_all = TRUE)
+
+# Two social-learning curves
+soc_df <- plot_df_all %>%
+  filter(type == "Social Learning") %>%
+  mutate(type = paste("Social Learning", behavior))
+
+plot_df_final <- bind_rows(ind_df, soc_df)
+
+pal <- c(
+  "Individual Learning" = "#A67C00",
+  "Social Learning SD" = "#4A90D9",
+  "Social Learning FG" = "#C44E52"
+)
+
+ggplot(plot_df_final,
+       aes(x = trial,
+           colour = type,
+           fill = type)) +
+  
+  geom_ribbon(aes(ymin = lo, ymax = hi),
+              alpha = 0.2,
+              colour = NA) +
+  
+  geom_line(aes(y = median),
+            linewidth = 1) +
+  
   scale_colour_manual(values = pal) +
   scale_fill_manual(values = pal) +
-  labs(
-    title    = "Social vs Individual Learning Hazard Over Trials",
-    subtitle = "Shaded bands = 90% posterior credible interval",
-    x        = "Trial",
-    y        = "Hazard rate",
-    colour   = NULL, fill = NULL
+  
+  scale_x_continuous(
+    limits = c(0, 60),
+    breaks = seq(0, 60, by = 5)
   ) +
+  
+  labs(
+    title = "Social vs Individual Learning Hazard Over Trials",
+    subtitle = "Shaded bands = 90% posterior credible interval",
+    x = "Trial",
+    y = "Hazard rate",
+    colour = NULL,
+    fill = NULL
+  ) +
+  
   theme_classic(base_size = 13) +
   theme(
-    legend.position  = c(0.15, 0.88),
+    legend.position = c(0.15, 0.88),
     legend.background = element_blank(),
-    plot.title       = element_text(face = "bold")
+    plot.title = element_text(face = "bold")
   )
 
 # Input group data to determine year of crossover
