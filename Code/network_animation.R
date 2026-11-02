@@ -7,19 +7,19 @@ if(!require(network)){install.packages('network'); library(network)} # For assig
 setwd("../Data")
 
 # Read in data
-nxn <- readRDS("nxn.RData")
+nxn <- readRDS("nxn_sd.RData")
 ILV_all <- read.csv("Individuals_Residency.csv", header=TRUE, sep=",")
-filtered_data <- read.csv("filtered_data.csv")
+group_data <- read.csv("group_data_sd.csv")
 
 # Choose a HC Behavior
 HC <- "SD"
 
 # Get rid of data without individuals
-ids_to_keep <- with(filtered_data, tapply(DiffHI == HC, Code, function(x) any(x, na.rm = TRUE)))
+ids_to_keep <- with(group_data, tapply(DiffHI == HC, Code, function(x) any(x, na.rm = TRUE)))
 ids_to_keep <- names(ids_to_keep)[ids_to_keep]
 
 # Subset the data to keep only those individuals
-HI_ids <- subset(filtered_data, Code %in% ids_to_keep)
+HI_ids <- subset(group_data, Code %in% ids_to_keep)
 
 # Only include individuals with IDs in HI_data
 ILV_all <- subset(ILV_all, Alias %in% HI_ids$Code)
@@ -69,7 +69,7 @@ net_list <- lapply(nxn, function (df) {
 # Create a dynamic network object
 
 # Years for each matrix
-years <- 1:40
+years <- 1:max(group_data$event_period)
 
 # Create dynamic network with real years
 dyn_net <- networkDynamic(
@@ -79,7 +79,7 @@ dyn_net <- networkDynamic(
   termini = years + 1  # each network lasts 1 year
 )
 
-saveRDS(dyn_net, "dyn_net_sd.RData")
+#saveRDS(dyn_net, "dyn_net_sd.RData")
 
 # Get all edge IDs in the dynamic network
 all_edge_ids <- seq_len(network.edgecount(dyn_net))
@@ -102,21 +102,29 @@ for (i in seq_along(net_list)) {
   )
 }
 
-# Assume filtered_data has columns: Alias, Year, Conf_HI
+# Assume group_data has columns: Alias, Year, Conf_HI
 # Get all unique node names
 vn <- network.vertex.names(dyn_net)
 
-# Add dynamic color attribute
-for (i in seq_along(years)) {
-  year <- years[i]
+# Keep track of nodes that have ever been HC
+cumulative_hi_nodes <- character(0)
+
+for (year in years) {
   
-  # Nodes with Conf_HI == HC for this year
-  hi_nodes <- unique(filtered_data$Code[filtered_data$sixmon == year & filtered_data$DiffHI == HC])
+  # Nodes that become HC this year
+  new_hi_nodes <- unique(
+    group_data$Code[
+      group_data$event_period == year &
+        group_data$DiffHI == HC
+    ]
+  )
   
-  # Assign colors: red if in hi_nodes, gray otherwise
-  colors <- ifelse(vn %in% hi_nodes, "red", "gray")
+  # Add to cumulative set
+  cumulative_hi_nodes <- union(cumulative_hi_nodes, new_hi_nodes)
   
-  # Activate color attribute for this year
+  # Once red, always red
+  colors <- ifelse(vn %in% cumulative_hi_nodes, "red", "gray")
+  
   activate.vertex.attribute(
     dyn_net,
     prefix = "color",

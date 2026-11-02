@@ -156,14 +156,10 @@ saveRDS(nxn_fg, "nxn_fg.RData") # Save data
 # Read in all network data
 nxn <- readRDS("nxn_fg.RData")
 SRI_vert_all <- readRDS("SRI_vert_all.RData")
-ecol_all <- as.array(readRDS("ecol_all.RData"))
 
 #' Duplicate ecol data for inter-event periods
 # Read in group data
 group_data <- read.csv("group_data_fg.csv")
-
-# Get unique event periods in order
-names(ecol_all) <- sort(unique(group_data$Year))
 
 # Group inter-event periods based on their year
 event_periods <- group_data %>%
@@ -174,25 +170,6 @@ event_periods <- group_data %>%
 
 # Get the extend of events
 T_event <- length(unique(event_periods$event_period))
-
-# Expand ecol_all to match each event period
-ecol_all <- lapply(seq_len(nrow(event_periods)), function(i) {
-  yr <- event_periods$Year[i]
-  ecol_all[[as.character(yr)]]
-})
-
-# Get rid of IDs without data in nxn from ecol data
-for (i in seq_along(ecol_all)) {
-  target_names <- rownames(nxn[[i]])
-  
-  rn <- rownames(ecol_all[[i]])
-  cn <- colnames(ecol_all[[i]])
-  
-  keep_r <- target_names[target_names %in% rn]
-  keep_c <- target_names[target_names %in% cn]
-  
-  ecol_all[[i]] <- ecol_all[[i]][keep_r, keep_c, drop = FALSE]
-}
 
 #' Add zeros to rows that don't have all individuals so that each network 
 #' has every individual
@@ -237,21 +214,11 @@ full_mat[common_ids, common_ids] <- SRI_vert_all[common_ids, common_ids]
 SRI_vert_all <- replicate(T_event, full_mat, simplify = FALSE)
 SRI_vert_all <- as.array(SRI_vert_all)
 
-#' Also do this for the ecol matrix
-ecol_all <- lapply(ecol_all, function(mat) {
-  # Current IDs in this matrix
-  current_ids <- rownames(mat)
-  
-  # Create a full zero matrix with all IDs
-  full_mat <- matrix(0, nrow = length(total_ids), ncol = length(total_ids),
-                     dimnames = list(total_ids, total_ids))
-  
-  # Fill in existing values
-  full_mat[current_ids, current_ids] <- mat
-  
-  return(full_mat)
+# Get rid of data with mother-calf pairs
+nxn_full <- lapply(nxn_full, function(mat) {
+  mat[SRI_vert_all[[1]] == 1] <- 0
+  mat
 })
-
 
 #' Put all networks into data frame called edge_list
 edge_list <- do.call(rbind, lapply(seq_along(nxn_full), function(t) {
@@ -277,7 +244,7 @@ ILV_all <- read.csv("ILV_FG_subset.csv")
 ILV_all <- subset(ILV_all, Alias %in% unique(edge_list$focal))
 
 # Create acquisition data
-# 1. Filter group_data for confirmed HC behavior after first aquisition date
+# 1. Filter group_data for confirmed HC behavior after first acquisition date
 HC <- "FG"
 first_month <- min(group_data$event_period[group_data$DiffHI == HC])
 hi_data <- group_data[group_data$DiffHI == HC & group_data$event_period != first_month, ]
@@ -335,7 +302,7 @@ ILV_tv <- data.frame(
   id = rep(ILV_all$Alias, each = T_event),
   time = rep(1:T_event, times = length(ILV_all$Alias)),  
   age = (rep(event_periods$Year, times = length(ILV_all$Alias)) - 
-           rep(ILV_all$BirthYear, each = T_event)) - 1
+           rep(ILV_all$BirthYear - 1, each = T_event)) - 1
 )
 
 # Change age to age groups
@@ -397,6 +364,7 @@ ids <- unique(prob_HI$Code)
 HIProp <- prob_HI$HIprop
 
 # Create dataframe for HC prop weights
+## CHECK IF THIS HAS HIGHER VAR FOR SD OR FG?
 HI_matrix <- data.frame(
   trial = 1,
   id = ids,
@@ -405,6 +373,8 @@ HI_matrix <- data.frame(
 # Get rid of unused individuals
 HI_matrix <- HI_matrix[HI_matrix$id %in% event_data$id, ]
 write.csv(HI_matrix, "HI_matrix_fg.csv") # Save data
+
+# Input proportion of time spent
 
 # Add vertical network to edge_list
 edge_list_vert <- do.call(rbind, lapply(seq_along(SRI_vert_all), function(t) {
@@ -423,26 +393,9 @@ edge_list_vert <- do.call(rbind, lapply(seq_along(SRI_vert_all), function(t) {
 
 edge_list$vert <- edge_list_vert$vert
 
-# Add ecol network to edge_list
-edge_list_ecol <- do.call(rbind, lapply(seq_along(ecol_all), function(t) {
-  mat <- ecol_all[[t]]
-  ids <- colnames(mat)  # or rownames(mat), assuming square
-  upper_idx <- which(upper.tri(mat, diag = TRUE), arr.ind = TRUE)
-  
-  data.frame(
-    focal = ids[upper_idx[, 1]],
-    other = ids[upper_idx[, 2]],
-    trial = 1,
-    ecol = mat[upper_idx],
-    time = t
-  )
-}))
-
-edge_list$ecol <- edge_list_ecol$ecol
-
 # Rearrange
 edge_list <- edge_list[, c("focal", "other", "trial", 
-                           "assoc", "vert", "ecol", "time")]
+                           "assoc", "vert", "time")]
 
 saveRDS(edge_list, "edge_list_fg.RData") # Save data
 
@@ -454,6 +407,9 @@ event_data <- read.csv("event_data_fg.csv")
 
 # Read in edge list
 edge_list <- readRDS("edge_list_fg.RData")
+## Fix for single-network
+edge_list_h <- edge_list[,-c(5)]
+edge_list_v <- edge_list[,-c(4)]
 
 # Read in ILV data
 ILV_tv <- read.csv("ILV_tv_fg.csv")
@@ -462,7 +418,7 @@ ILV_c <- read.csv("ILV_c_fg.csv")
 # Read in weighted data
 HI_matrix <- read.csv("HI_matrix_fg.csv")
 
-# Input data
+# Input data for multi-network
 data_list <- import_user_STb(
   event_data = event_data,
   networks = edge_list,
@@ -473,25 +429,64 @@ data_list <- import_user_STb(
   t_weights = HI_matrix
 )
 
+# Input data for single-network horizontal
+data_list_h <- import_user_STb(
+  event_data = event_data,
+  networks = edge_list_h,
+  ILV_c = ILV_c,
+  ILV_tv = ILV_tv,
+  ILVi = c("age_group", "sex"),
+  ILVs = c("age_group", "sex"),
+  t_weights = HI_matrix
+)
+
+# Input data for single-network vertical
+data_list_v <- import_user_STb(
+  event_data = event_data,
+  networks = edge_list_v,
+  ILV_c = ILV_c,
+  ILV_tv = ILV_tv,
+  ILVi = c("age_group", "sex"),
+  ILVs = c("age_group", "sex"),
+  t_weights = HI_matrix
+)
+
 saveRDS(data_list, "data_list_fg.RData") # Save data
+saveRDS(data_list_h, "data_list_h_fg.RData") # Save data
+saveRDS(data_list_v, "data_list_v_fg.RData") # Save data
 
 
 #### PART 4: Run the model ####
 
 # Input data_list
 data_list <- readRDS("data_list_fg.RData")
+data_list_h <- readRDS("data_list_h_fg.RData")
+data_list_v <- readRDS("data_list_v_fg.RData")
 
 # Generate the different models
 ## Multi-network model
 model_full <- generate_STb_model(data_list, 
                                  data_type = "continuous_time", 
-                                 est_acqTime = T)
+                                 est_acqTime = T,
+                                 priors = list(
+                                   log_lambda0 = "normal(-4, 0.5)",
+                                   log_sprime = "normal(-4, 0.5)"
+                                 ))
+
+## Single-network models
+model_single <- generate_STb_model(data_list_h, 
+                                   data_type = "continuous_time", 
+                                   est_acqTime = T)
 
 ## Asocial only contrained model
 model_asoc = generate_STb_model(data_list, 
                                 data_type = "continuous_time",
                                 model_type="asocial", 
-                                est_acqTime = T)
+                                est_acqTime = T,
+                                priors = list(
+                                  log_lambda0 = "normal(-4, 0.5)",
+                                  log_sprime = "normal(-4, 0.5)"
+                                ))
 
 # Diagnoses notes
 #' Detected N_veff = 0, likihood provides no information
@@ -538,7 +533,7 @@ data_list$A <- NULL
 # Test run
 # fit_test <- fit_STb(
 #   data_list,
-#   "model_strong_priors_sd.stan",
+#   "model_priors.stan",
 #   chains = 1,
 #   iter_warmup = 1000,
 #   iter_sampling = 500,
@@ -549,7 +544,7 @@ data_list$A <- NULL
 # Fit the full model
 full_fit <- fit_STb(
   data_list,
-  "model_strong_priors_fg.stan",
+  "model_priors.stan",
   chains = 4,
   parallel_chains = 4,
   cores = 4,
@@ -562,9 +557,38 @@ full_fit <- fit_STb(
 full_fit$cmdstan_diagnose()
 STb_save(full_fit, output_dir = "cmdstan_saves_fg", name="my_first_fit") # Save model
 
+# Fit the single-network model horizontal
+single_fit_h <- fit_STb(data_list_h,
+                        "SN_model_priors.stan",
+                        parallel_chains = 4,
+                        chains = 4,
+                        cores = 4,
+                        iter_warmup = 2000,
+                        iter_sampling = 2000,
+                        adapt_delta = 0.99,
+                        refresh = 100)
+
+single_fit_h$cmdstan_diagnose()
+STb_save(single_fit_h, output_dir = "cmdstan_saves_fg_h", name="my_first_fit") # Save model
+
+# Fit the single-network model vertical
+single_fit_v <- fit_STb(data_list_v,
+                        "SN_model_priors.stan",
+                        parallel_chains = 4,
+                        chains = 4,
+                        cores = 4,
+                        iter_warmup = 2000,
+                        iter_sampling = 2000,
+                        adapt_delta = 0.99,
+                        refresh = 100)
+
+single_fit_v$cmdstan_diagnose()
+STb_save(single_fit_v, output_dir = "cmdstan_saves_fg_v", name="my_first_fit") # Save model
+
+
 # Fit the asocial model
 asocial_fit <- fit_STb(data_list,
-                       "AS_model_strong_priors_fg.stan",
+                       "AS_model_priors.stan",
                        parallel_chains = 4,
                        chains = 4,
                        cores = 4,
@@ -579,10 +603,12 @@ STb_save(asocial_fit, output_dir = "cmdstan_saves_fg_as", name="my_first_fit") #
 # Model comparisons
 ## Read in data from HPC
 full_fit <- readRDS('cmdstan_saves_fg/my_first_fit.rds')
+single_fit_h <- readRDS('cmdstan_saves_fg_h/my_first_fit.rds')
+single_fit_v <- readRDS('cmdstan_saves_fg_v/my_first_fit.rds')
 asocial_fit <- readRDS('cmdstan_saves_fg_as/my_first_fit.rds')
 
 ## Run LOOIC
-loo_output = STb_compare(full_fit, asocial_fit, method="loo-psis")
+loo_output = STb_compare(full_fit, single_fit_h, single_fit_v, asocial_fit, method="loo-psis")
 print(loo_output$comparison, simplify = FALSE)
 
 ## Plot
@@ -764,14 +790,15 @@ results_clean <- results_clean %>%
     str_detect(Parameter, "beta_ILVs_age_group") ~ paste0("Soc: Age ", level),
     TRUE ~ label
   ))
+write.csv(results_clean, "results_fg.csv") # save data
 
 # Only network variables
 Neffects_only <- results_clean %>%
-  filter(variable %in% c("Network"))
+  filter(label %in% c("s_net1", "s_net2"))
 
 # Only ILV variables
 ILVeffects_only <- results_clean %>%
-  filter(variable %in% c("Sex", "Age"))
+  filter(variable %in% c("Sex", "Age", "beta_ILVi_ecol_cond", "beta_ILVs_ecol_cond"))
 
 
 #' Visual Plot of effect sizes
@@ -802,8 +829,7 @@ ggplot(Neffects_only, aes(x = label, y = Median)) +
   
   labs(
     x = NULL,
-    y = "Effect size",
-    title = "Effects of Network Variables"
+    y = "Effect size"
   )
 
 # ILV
@@ -833,8 +859,7 @@ ggplot(ILVeffects_only, aes(x = label, y = Median)) +
   
   labs(
     x = NULL,
-    y = "Effect size",
-    title = "Effects of Individual and Social Variables"
+    y = "Effect size"
   )
 
 
@@ -848,13 +873,12 @@ draws_df <- fit$draws(format = "df")
 lambda_0   <- draws_df$lambda_0
 s_prime_1  <- draws_df$`s_prime[1]`
 s_prime_2  <- draws_df$`s_prime[2]`
-s_prime_3  <- draws_df$`s_prime[3]`
 
 # 2. Supply your trial sequence and informed counts per network 
 trials <- 1:data_list$T_max   
 
 # Social input for network k at time t = mean over naive focals of: sum_others(A[k,1,t,focal,other] * Zn[t,other])
-n_networks <- data_list$N_networks  # 3 networks
+n_networks <- data_list$N_networks  # 2 networks
 T_max      <- data_list$T_max       # 42 inter-event periods
 A          <- data_list$A           # [3, 1, 42, 1021, 1021]
 Zn         <- data_list$Zn[1, , ]  # [42, 1021]
@@ -893,8 +917,7 @@ il_hazard_mat <- matrix(rep(draws_df$lambda_0, T_max), nrow = n_draws, ncol = T_
 sl_hazard_mat <- matrix(NA, n_draws, T_max)
 for (t in 1:T_max) {
   sl_hazard_mat[, t] <- draws_df$`s_prime[1]` * social_input_df$assoc[t] +
-    draws_df$`s_prime[2]` * social_input_df$vert[t]  +
-    draws_df$`s_prime[3]` * social_input_df$ecol[t]
+    draws_df$`s_prime[2]` * social_input_df$vert[t]
 }
 
 # 4. Summarise posterior (median + 90% CI)
@@ -925,36 +948,52 @@ crossover_trial <- diff_df %>%
   slice(1) %>%
   pull(trial)
 
-# Save data
-saveRDS(plot_df, "plot_df_fg.RData")
+# Add corresponding year
+group_data <- read.csv("group_data_fg.csv")
+group_data$month_date <- as.Date(group_data$month_date, format = "%Y-%m-%d")
+year_lookup <- group_data |>
+  dplyr::group_by(event_period) |>
+  dplyr::summarise(
+    month_date = min(month_date),
+    Year = unique(Year)[1],
+    .groups = "drop"
+  )
+
+# Add years to plotting df
+plot_df <- dplyr::left_join(
+  plot_df,
+  year_lookup,
+  by = c("trial" = "event_period")
+)
 
 # 5. Plot
 pal <- c("Individual Learning" = "#A67C00", "Social Learning" = "#4A90D9")
 
-ggplot(plot_df, aes(x = trial, colour = type, fill = type)) +
-  geom_ribbon(aes(ymin = lo, ymax = hi), alpha = 0.2, colour = NA) +
-  geom_line(aes(y = median), linewidth = 1) +
+ggplot(plot_df,
+       aes(x = month_date,
+           colour = type,
+           fill = type)) +
+  geom_ribbon(aes(ymin = lo, ymax = hi),
+              alpha = 0.2,
+              colour = NA) +
+  geom_line(aes(y = median),
+            linewidth = 1) +
   scale_colour_manual(values = pal) +
   scale_fill_manual(values = pal) +
-  scale_x_continuous(
-    limits = c(0, 60),
-    breaks = seq(0, 60, by = 5)
+  scale_x_date(
+    date_breaks = "2 years",
+    date_labels = "%Y"
   ) +
   labs(
-    title    = "Social vs Individual Learning Hazard Over Trials",
-    subtitle = "Shaded bands = 90% posterior credible interval",
-    x        = "Trial",
+    x        = "Year",
     y        = "Hazard rate",
     colour   = NULL,
     fill     = NULL
   ) +
   theme_classic(base_size = 13) +
   theme(
-    legend.position   = c(0.15, 0.88),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = c(2, 0.88),
     legend.background = element_blank(),
-    plot.title        = element_text(face = "bold")
+    plot.title = element_text(face = "bold")
   )
-
-# Input group data to determine year of crossover
-group_data <- read.csv("group_data_fg.csv")
-unique(group_data$Year[group_data$event_period == 14])

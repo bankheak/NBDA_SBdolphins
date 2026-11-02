@@ -6,7 +6,7 @@ data {
     array[K] int<lower=0> N;
     array[K] int<lower=0> N_c;
 
-    array[K, Q] int<lower=-1> ind_id;
+    array[K,Q] int<lower=-1> ind_id;
 
     array[K] int<lower=1> T;
     int<lower=1> T_max;
@@ -15,9 +15,19 @@ data {
 
     array[K,T_max] real<lower=0> D;
 
+    int<lower=1> N_networks;
+
+    // association network only
+    array[N_networks,K,T_max] vector[P] E;
+
+    array[K] matrix[T_max,P] Z;
+    array[K] matrix[T_max,P] Zn;
+
     array[K,T_max] matrix[P,3] ILV_age_group;
+
     vector[P] ILV_sex;
 
+    int<lower=0> N_veff;
     array[K] int<lower=0> time_max;
     array[K,T_max] int<lower=0> D_int;
 }
@@ -25,10 +35,13 @@ data {
 parameters {
 
     real log_lambda_0_mean;
+    real log_s_prime_mean;
 
     vector[3] beta_ILVi_age_group;
-
     real beta_ILVi_sex;
+
+    vector[3] beta_ILVs_age_group;
+    real beta_ILVs_sex;
 }
 
 transformed parameters {
@@ -36,10 +49,17 @@ transformed parameters {
     real<lower=0> lambda_0 =
         exp(log_lambda_0_mean);
 
+    real<lower=0> s_prime =
+        exp(log_s_prime_mean);
+
     array[K,T_max] vector[P] age_group_i;
+    array[K,T_max] vector[P] age_group_s;
 
     vector[P] sex_i =
         ILV_sex * beta_ILVi_sex;
+
+    vector[P] sex_s =
+        ILV_sex * beta_ILVs_sex;
 
     for (trial in 1:K) {
 
@@ -48,17 +68,26 @@ transformed parameters {
             age_group_i[trial][timestep] =
                 ILV_age_group[trial][timestep] *
                 beta_ILVi_age_group;
+
+            age_group_s[trial][timestep] =
+                ILV_age_group[trial][timestep] *
+                beta_ILVs_age_group;
         }
     }
 }
 
 model {
 
-    log_lambda_0_mean ~ normal(-4,0.5);
+    // Priors
+
+    log_lambda_0_mean ~ normal(-4, 0.5);
+    log_s_prime_mean ~ normal(-4, 0.5);
 
     beta_ILVi_age_group ~ normal(0,1);
-
     beta_ILVi_sex ~ normal(0,1);
+
+    beta_ILVs_age_group ~ normal(0,1);
+    beta_ILVs_sex ~ normal(0,1);
 
     for (trial in 1:K) {
 
@@ -82,8 +111,20 @@ model {
                             + sex_i[id]
                         );
 
+                    real net_effect =
+                        s_prime *
+                        E[1,trial,time_step][id];
+
+                    real soc_term =
+                        net_effect *
+                        exp(
+                            age_group_s[trial,time_step,id]
+                            + sex_s[id]
+                        );
+
                     real base_rate =
-                        lambda_0 * ind_term;
+                        lambda_0 * ind_term +
+                        soc_term;
 
                     real lambda =
                         fmax(base_rate,1e-6) *
@@ -112,11 +153,23 @@ model {
                         + sex_i[id]
                     );
 
+                real net_effect =
+                    s_prime *
+                    E[1,trial,time_step][id];
+
+                real soc_term =
+                    net_effect *
+                    exp(
+                        age_group_s[trial,time_step,id]
+                        + sex_s[id]
+                    );
+
+                real base_rate =
+                    lambda_0 * ind_term +
+                    soc_term;
+
                 real lambda =
-                    fmax(
-                        lambda_0 * ind_term,
-                        1e-6
-                    ) *
+                    fmax(base_rate,1e-6) *
                     D[trial,time_step];
 
                 target += -lambda;
@@ -127,10 +180,19 @@ model {
 
 generated quantities {
 
+    real<lower=0> s =
+        s_prime / lambda_0;
+
     matrix[K,Q] log_lik_matrix =
-        rep_matrix(0.0,K,Q);
+        rep_matrix(0.0, K, Q);
+
+    int count_ST = 0;
+
+    real psocn_sum = 0;
 
     for (trial in 1:K) {
+
+        // learned individuals
 
         for (n in 1:N[trial]) {
 
@@ -152,8 +214,20 @@ generated quantities {
                             + sex_i[id]
                         );
 
+                    real net_effect =
+                        s_prime *
+                        E[1,trial,time_step][id];
+
+                    real soc_term =
+                        net_effect *
+                        exp(
+                            age_group_s[trial,time_step,id]
+                            + sex_s[id]
+                        );
+
                     real rate =
-                        lambda_0 * ind_term;
+                        lambda_0 * ind_term +
+                        soc_term;
 
                     real lambda =
                         fmax(rate,1e-6) *
@@ -166,10 +240,38 @@ generated quantities {
                         log_lik_matrix[trial,n] =
                             log(rate) -
                             cum_hazard;
+
+                        {
+                            real Tn =
+                                E[1,trial,time_step][id];
+
+                            real contribution =
+                                (
+                                    s_prime *
+                                    D[trial,time_step] *
+                                    exp(
+                                        age_group_s[
+                                            trial,
+                                            time_step,
+                                            id
+                                        ]
+                                        + sex_s[id]
+                                    ) *
+                                    Tn
+                                ) /
+                                fmax(lambda,1e-6);
+
+                            psocn_sum +=
+                                contribution;
+                        }
+
+                        count_ST += 1;
                     }
                 }
             }
         }
+
+        // censored individuals
 
         for (c in 1:N_c[trial]) {
 
@@ -186,9 +288,22 @@ generated quantities {
                         + sex_i[id]
                     );
 
+                real net_effect =
+                    s_prime *
+                    E[1,trial,time_step][id];
+
+                real soc_term =
+                    net_effect *
+                    exp(
+                        age_group_s[trial,time_step,id]
+                        + sex_s[id]
+                    );
+
                 real lambda =
                     fmax(
-                        lambda_0 * ind_term,
+                        lambda_0 *
+                        ind_term +
+                        soc_term,
                         1e-6
                     ) *
                     D[trial,time_step];
@@ -203,12 +318,20 @@ generated quantities {
         }
     }
 
+    real percent_ST;
+
+    if (count_ST > 0)
+        percent_ST =
+            psocn_sum /
+            count_ST;
+    else
+        percent_ST = 0;
+
     array[K * Q] real log_lik;
 
     int idx = 1;
 
     for (trial in 1:K) {
-
         for (n in 1:Q) {
 
             log_lik[idx] =

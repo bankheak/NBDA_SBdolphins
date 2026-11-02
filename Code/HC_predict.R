@@ -11,10 +11,115 @@ pacman::p_load(stringr, tidyr, abind, ggmap, ggplot2,
 # Set relative path working directory
 setwd("../Data") 
 
-# Read in data
-boat_data <- read.csv("boat_data.csv")
-boat_data$Date <- as.Date(boat_data$Date,
-                          format = "%Y-%m-%d")
+# Create fake data
+set.seed(123)
+
+n <- 2031
+
+boat_data <- data.frame(
+  X.1 = 1:n,
+  
+  X = sample(1:10000, n, replace = FALSE),
+  
+  SightingFID = sample(40000:50000, n, replace = TRUE),
+  
+  Date = sample(
+    seq(as.Date("2012-01-01"),
+        as.Date("2023-12-31"),
+        by = "day"),
+    n,
+    replace = TRUE
+  ),
+  
+  SurveyNum = sample(7000:12000, n, replace = TRUE),
+  
+  Sighting = sample(1:100, n, replace = TRUE),
+  
+  SurveyType = sample(
+    c("Photo-id (Pop Mon)",
+      "Behavior Survey",
+      "Focal Follow"),
+    n,
+    replace = TRUE,
+    prob = c(0.8, 0.1, 0.1)
+  ),
+  
+  Effort = sample(
+    c("Photo-id (Pop Mon)",
+      "Focal Follow",
+      "Behavior Survey"),
+    n,
+    replace = TRUE
+  ),
+  
+  StartTime = sprintf(
+    "%d:%02d",
+    sample(7:18, n, replace = TRUE),
+    sample(0:59, n, replace = TRUE)
+  ),
+  
+  EndTime = sprintf(
+    "%d:%02d",
+    sample(7:19, n, replace = TRUE),
+    sample(0:59, n, replace = TRUE)
+  ),
+  
+  StartLat = round(runif(n, 27.0, 27.8), 5),
+  
+  StartLon = round(runif(n, -82.9, -82.2), 5),
+  
+  HumanInteraction = sample(
+    c("0", "F", "I", "L", "F,I", "F,L", "I,L"),
+    n,
+    replace = TRUE,
+    prob = c(0.70, 0.08, 0.06, 0.06, 0.05, 0.03, 0.02)
+  ),
+  
+  SightingGroup = replicate(
+    n,
+    paste(
+      sample(
+        c(
+          paste0("F", sample(100:300, sample(2:6,1))),
+          paste0("FB", sample(1:99, sample(1:3,1))),
+          paste0("C", sample(100:999, sample(0:2,1)))
+        ),
+        replace = FALSE
+      ),
+      collapse = ","
+    )
+  ),
+  
+  SightingNotes = sample(
+    c(
+      "Several recreational boats observed.",
+      "Fishing activity nearby.",
+      "No apparent human interaction.",
+      "One vessel transiting through area.",
+      "Crab traps present.",
+      "Anglers actively fishing.",
+      ""
+    ),
+    n,
+    replace = TRUE
+  ),
+  
+  X.Boats = pmin(rpois(n, lambda = 4), 25),
+  
+  X.Lines = pmin(rpois(n, lambda = 0.5), 10),
+  
+  X.CrabPots = pmin(rpois(n, lambda = 0.3), 20),
+  
+  Categories.Defined. = sample(
+    c("0", "1"),
+    n,
+    replace = TRUE,
+    prob = c(0.3, 0.7)
+  ),
+  
+  stringsAsFactors = FALSE
+)
+
 
 # Diagnose data before model
 hist(boat_data$X.CrabPots)
