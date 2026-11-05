@@ -1,7 +1,8 @@
 # Code
 
-This folder contains all the code for the NBDA_SBdolphins repository. The following describes the analysis steps in the `NBDA_Bayes_sd.R` file. 
+This folder contains all the code for the NBDA_SBdolphins repository.  
 
+## STEP-BY_STEP for the `NBDA_Bayes_sd.R` and `NBDA_Bayes_fg.R` files.
 ## Data analysis process
 <img width="1461" height="622" alt="NBDA_workflow" src="https://github.com/user-attachments/assets/7312c167-ed93-474a-b76c-74a8117aadfa" />
 
@@ -64,3 +65,9 @@ I first ran posterior predictive checks to make sure the observed data lines up 
 I then plotted model predictor effect sizes separated by social and individual ILV versus network effects.
 
 Finally I extracted hazard rates for target behaviors. To do this I first extracted posterior distributions and the social and individual inputs for each network over each inter-event period. I then used these estimates to compute hazard rates per period, across all posterior draws. I then took the summary of these and plotted them to understand the difference in social versus individual learning over time. Finally, I found the trial when social learning overtook individual learning and related it to the study year.
+
+
+## STEP-BY_STEP for the `HC_predict.R` file.
+
+I first ran a brms GAM for both lines and crap pots in the water, then ran a posterior predictive check. After I created a time grid to look at the predicted number of lines and crab pots in the water given the model estimates using a plot.
+
