@@ -21,17 +21,8 @@ setwd("../Data")
 #### PART 1: Create Networks ####
 # Horizontal network -----------------------------------------
 
-# Read in filtered data
-filtered_data <- read.csv("filtered_data.csv")
+### filtered_data AND ILV_all data HIDDEN ###
 
-# Add individual data
-# Read ILVs
-ILV_all <- read.csv("Individuals_Residency.csv", header=TRUE, sep=",")
-ILV_all <- ILV_all[, c("Alias", "HI_Indiv", "Mom", "Sex", "BirthYear")]
-
-#### CHECK IF THIS CHANGES RESULTS
-# Get rid of ids that aren't in filtered_data
-filtered_data <- subset(filtered_data, Code %in% unique(ILV_all$Alias))
 
 # Group each individual by date and sighting
 group_data <- filtered_data[,c("Date", "Sighting", "Code", "Year", 
@@ -154,12 +145,8 @@ saveRDS(nxn_sd, "nxn_sd.RData") # Save data
 
 # Vertical network -----------------------------------------
 
-# Read in original data
-filtered_data <- read.csv("filtered_data.csv") 
+### filtered_data AND ILV_all data HIDDEN ###
 
-# Find the demographics of the population
-ILV_all <- read.csv("Individuals_Residency.csv", header=TRUE, sep=",")
-ILV_all <- ILV_all[, c("Alias", "HI_Indiv", "Mom", "Sex", "BirthYear")]
 
 # Subset demographics to include individuals seen in original data
 Codes <- unique(filtered_data$Code)
@@ -179,9 +166,8 @@ saveRDS(SRI_vert_all, "SRI_vert_all.RData") # Save data
 nxn <- readRDS("nxn_sd.RData")
 SRI_vert_all <- readRDS("SRI_vert_all.RData")
 
-#' Duplicate ecol data for inter-event periods
-# Read in group data
-group_data <- read.csv("group_data_sd.csv")
+### group_data HIDDEN ###
+
 
 # Group inter-event periods based on their year
 event_periods <- group_data %>%
@@ -260,7 +246,8 @@ edge_list <- do.call(rbind, lapply(seq_along(nxn_full), function(t) {
 
 #' Add order of acquisition data
 # Read in demographic data
-ILV_all <- read.csv("ILV_SD_subset.csv")
+
+### ILV_all HIDDEN ###
 
 # Subset event data to include only edge_list ids
 ILV_all <- subset(ILV_all, Alias %in% unique(edge_list$focal))
@@ -971,7 +958,7 @@ crossover_trial <- diff_df %>%
   pull(trial)
 
 # Add corresponding year
-group_data <- read.csv("group_data_sd.csv")
+### group_data HIDDEN ###
 group_data$month_date <- as.Date(group_data$month_date, format = "%Y-%m-%d")
 year_lookup <- group_data |>
   dplyr::group_by(event_period) |>
